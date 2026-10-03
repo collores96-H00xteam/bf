@@ -1,4 +1,4 @@
--- Bin's Blox Fruits Hub v11 — LOCKED CAM + FAT HITBOX
+-- Bin's Blox Fruits Hub v12 — FISH + FRUIT TP
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
@@ -38,33 +38,47 @@ local function groundY(x, z, y)
         local rp = RaycastParams.new()
         rp.FilterType = Enum.RaycastFilterType.Exclude
         rp.FilterDescendantsInstances = character and {character} or {}
-        rp.IgnoreWater = true
+        rp.IgnoreWater = false
         return workspace:Raycast(Vector3.new(x, y or 500, z), Vector3.new(0, -1000, 0), rp)
     end)
     if ok and res then return res.Position.Y end
     return nil
 end
 
+-- Улучшенный ТП: ищет землю с нескольких высот, не проваливается
 local function tpTo(pos)
     local r = getRoot(); if not r then return end
-    local gy = groundY(pos.X, pos.Z, pos.Y + 400)
-    local fy = gy and (gy + 3.5) or (pos.Y + 3.5)
+    local gy = groundY(pos.X, pos.Z, pos.Y + 500)
+    if not gy then gy = groundY(pos.X, pos.Z, 1000) end
+    if not gy then gy = pos.Y end
+    local fy = gy + 3.5
     pcall(function() r.CFrame = CFrame.new(pos.X, fy, pos.Z) end)
+    task.wait(0.05)
+    local gy2 = groundY(pos.X, pos.Z, fy + 20)
+    if gy2 and math.abs(gy2 + 3.5 - fy) > 2 then
+        pcall(function() r.CFrame = CFrame.new(pos.X, gy2 + 3.5, pos.Z) end)
+    end
+end
+
+local function tpToObject(obj)
+    if not obj then return end
+    local pp = obj:IsA("Model") and (obj:FindFirstChild("Handle") or obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart) or obj
+    if not pp then return end
+    tpTo(pp.Position)
 end
 
 local state = {
     autoFarmLevel=false, autoFarmPirates=false, autoFarmMarines=false, autoFarmBosses=false,
-    attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=8,
+    attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=6,
     selectedTP="Pirate Island", espNPCs=false, espPlayers=false,
-    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=25,
-    lockCamera=true,
+    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=25, lockCamera=true,
+    autoFish=false, selectedFruit="Dragon",
 }
 
 -- ============================================================
--- FAT HITBOX — раздуваем HRP NPC клиентски
+-- FAT HITBOX
 -- ============================================================
-local origSizes = setmetatable({}, {__mode = "k"})
-
+local origSizes = setmetatable({}, {__mode="k"})
 local function enlargeHitbox(npc)
     if not state.fatHitbox or not npc then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
@@ -76,10 +90,8 @@ local function enlargeHitbox(npc)
         hrp.CanCollide = false
         hrp.Massless = true
         hrp.Transparency = 0.5
-        hrp.CanQuery = true
     end)
 end
-
 local function restoreHitbox(npc)
     if not npc then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
@@ -97,23 +109,15 @@ local function restoreHitbox(npc)
 end
 
 -- ============================================================
--- HOVER + CAMERA LOCK
+-- HOVER
 -- ============================================================
-local hoverTarget = nil
-local hoverActive = false
-
+local hoverTarget, hoverActive = nil, false
 local function setHover(npc)
-    if hoverActive and hoverTarget and hoverTarget ~= npc then
-        restoreHitbox(hoverTarget)
-    end
+    if hoverActive and hoverTarget and hoverTarget ~= npc then restoreHitbox(hoverTarget) end
     hoverTarget = npc
     hoverActive = npc ~= nil
-    if humanoid then
-        pcall(function() humanoid.PlatformStand = hoverActive end)
-    end
-    if hoverActive and npc then
-        enlargeHitbox(npc)
-    end
+    if humanoid then pcall(function() humanoid.PlatformStand = hoverActive end) end
+    if hoverActive and npc then enlargeHitbox(npc) end
 end
 
 task.spawn(function()
@@ -125,61 +129,99 @@ task.spawn(function()
             if r and hrp and hum and hum.Health > 0 then
                 local target = hrp.Position
                 local above = Vector3.new(target.X, target.Y + state.hoverHeight, target.Z)
-                -- root над NPC, смотрим вниз
                 pcall(function() r.CFrame = CFrame.lookAt(above, target) end)
-                pcall(function() r.Velocity = Vector3.new(0, 0, 0) end)
-                -- камера фиксируется на NPC (центр экрана = NPC)
+                pcall(function() r.Velocity = Vector3.new(0,0,0) end)
                 if state.lockCamera and camera then
-                    pcall(function()
-                        camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target)
-                    end)
+                    pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target) end)
                 end
             else
                 restoreHitbox(hoverTarget)
-                hoverActive = false
-                hoverTarget = nil
+                hoverActive = false; hoverTarget = nil
                 if humanoid then pcall(function() humanoid.PlatformStand = false end) end
             end
         end
     end
 end)
 
+-- ============================================================
+-- TP LOCATIONS
+-- ============================================================
 local TP_LOCATIONS = {
-    { name="Bandit Camp",       icon="🏕️", pos=Vector3.new(-1110,20,3200), sea=1 },
-    { name="Pirate Village",    icon="🏘️", pos=Vector3.new(-1200,20,3400), sea=1 },
-    { name="Marine Fort",       icon="🛡️", pos=Vector3.new(-2800,20,4300), sea=1 },
-    { name="Jungle",            icon="🌴", pos=Vector3.new(-1600,20,200),  sea=1 },
-    { name="Marine Ford",       icon="⚓", pos=Vector3.new(-2760,20,4320), sea=1 },
-    { name="Fountain City",     icon="⛲", pos=Vector3.new(-1250,20,3200), sea=1 },
-    { name="Pirate Island",     icon="🏴‍☠️", pos=Vector3.new(1000,20,1200),  sea=1 },
-    { name="First Sea Port",    icon="🚢", pos=Vector3.new(400,20,400),    sea=1 },
-    { name="Colosseum",         icon="🏛️", pos=Vector3.new(-1500,20,200),  sea=1 },
-    { name="Desert",            icon="🏜️", pos=Vector3.new(1000,20,4500),  sea=1 },
-    { name="Snow Island",       icon="❄️", pos=Vector3.new(1250,20,-1500), sea=1 },
-    { name="Skylands",          icon="☁️", pos=Vector3.new(-500,800,-1500),sea=1 },
-    { name="Prison",            icon="🔒", pos=Vector3.new(5000,20,800),   sea=1 },
-    { name="Kingdom of Rose",   icon="🌹", pos=Vector3.new(-400,20,6000),  sea=2 },
-    { name="Green Zone",        icon="🌿", pos=Vector3.new(-3500,20,-4500),sea=2 },
-    { name="Graveyard",         icon="⚰️", pos=Vector3.new(-5500,20,-3000),sea=2 },
-    { name="Snow Mountain",     icon="🏔️", pos=Vector3.new(-1500,20,-5500),sea=2 },
-    { name="Cursed Ship",       icon="👻", pos=Vector3.new(9000,20,5000),  sea=2 },
-    { name="Ice Castle",        icon="🏰", pos=Vector3.new(-6000,20,-6000),sea=2 },
-    { name="Forgotten Island",  icon="🗿", pos=Vector3.new(-3000,20,-8000),sea=2 },
-    { name="Port Town",         icon="⛵", pos=Vector3.new(-500,20,-10000),sea=3 },
-    { name="Hydra Island",      icon="🐉", pos=Vector3.new(5000,20,-9000), sea=3 },
-    { name="Great Tree",        icon="🌳", pos=Vector3.new(-3000,20,-12000),sea=3 },
-    { name="Floating Turtle",   icon="🐢", pos=Vector3.new(-9000,20,-10000),sea=3 },
-    { name="Haunted Castle",    icon="🏚️", pos=Vector3.new(3000,20,-12000),sea=3 },
-    { name="Castle on the Sea", icon="🏰", pos=Vector3.new(-6000,20,-14000),sea=3 },
-    { name="Sea of Treats",     icon="🍭", pos=Vector3.new(5000,20,-15000),sea=3 },
+    { name="Bandit Camp", icon="🏕️", pos=Vector3.new(-1110,20,3200), sea=1 },
+    { name="Pirate Village", icon="🏘️", pos=Vector3.new(-1200,20,3400), sea=1 },
+    { name="Marine Fort", icon="🛡️", pos=Vector3.new(-2800,20,4300), sea=1 },
+    { name="Jungle", icon="🌴", pos=Vector3.new(-1600,20,200), sea=1 },
+    { name="Marine Ford", icon="⚓", pos=Vector3.new(-2760,20,4320), sea=1 },
+    { name="Fountain City", icon="⛲", pos=Vector3.new(-1250,20,3200), sea=1 },
+    { name="Pirate Island", icon="🏴‍☠️", pos=Vector3.new(1000,20,1200), sea=1 },
+    { name="First Sea Port", icon="🚢", pos=Vector3.new(400,20,400), sea=1 },
+    { name="Colosseum", icon="🏛️", pos=Vector3.new(-1500,20,200), sea=1 },
+    { name="Desert", icon="🏜️", pos=Vector3.new(1000,20,4500), sea=1 },
+    { name="Snow Island", icon="❄️", pos=Vector3.new(1250,20,-1500), sea=1 },
+    { name="Skylands", icon="☁️", pos=Vector3.new(-500,800,-1500), sea=1 },
+    { name="Prison", icon="🔒", pos=Vector3.new(5000,20,800), sea=1 },
+    { name="Kingdom of Rose", icon="🌹", pos=Vector3.new(-400,20,6000), sea=2 },
+    { name="Green Zone", icon="🌿", pos=Vector3.new(-3500,20,-4500), sea=2 },
+    { name="Graveyard", icon="⚰️", pos=Vector3.new(-5500,20,-3000), sea=2 },
+    { name="Snow Mountain", icon="🏔️", pos=Vector3.new(-1500,20,-5500), sea=2 },
+    { name="Cursed Ship", icon="👻", pos=Vector3.new(9000,20,5000), sea=2 },
+    { name="Ice Castle", icon="🏰", pos=Vector3.new(-6000,20,-6000), sea=2 },
+    { name="Forgotten Island", icon="🗿", pos=Vector3.new(-3000,20,-8000), sea=2 },
+    { name="Port Town", icon="⛵", pos=Vector3.new(-500,20,-10000), sea=3 },
+    { name="Hydra Island", icon="🐉", pos=Vector3.new(5000,20,-9000), sea=3 },
+    { name="Great Tree", icon="🌳", pos=Vector3.new(-3000,20,-12000), sea=3 },
+    { name="Floating Turtle", icon="🐢", pos=Vector3.new(-9000,20,-10000), sea=3 },
+    { name="Haunted Castle", icon="🏚️", pos=Vector3.new(3000,20,-12000), sea=3 },
+    { name="Castle on the Sea", icon="🏰", pos=Vector3.new(-6000,20,-14000), sea=3 },
+    { name="Sea of Treats", icon="🍭", pos=Vector3.new(5000,20,-15000), sea=3 },
 }
 local function findLoc(n) for _,l in ipairs(TP_LOCATIONS) do if l.name==n then return l end end end
 
+-- ============================================================
+-- FRUITS (rare)
+-- ============================================================
+local FRUITS = {
+    "Dragon", "Leopard", "Kitsune", "Dough", "Venom", "Shadow", "Control",
+    "Spirit", "Mammoth", "T-Rex", "Gas", "Portal", "Buddha", "Phoenix",
+    "Gravity", "Rumble", "Magma", "Ice", "Light", "Dark", "Rubber",
+    "Sand", "Diamond", "Barrier", "Door", "Chop", "Spring", "Bomb",
+    "Spike", "Flame", "Falcon", "Blade", "Ghost", "Rocket", "Spin",
+    "Smoke", "Revive", "Love", "Spider", "Sound", "Creation", "Pain",
+    "Blizzard",
+}
+
+-- сканер фруктов: собирает все объекты в workspace с именем фрукта
+local function findFruit(name)
+    if not name or name == "" then return nil end
+    local key = name:lower()
+    local best, bd = nil, math.huge
+    local r = getRoot(); if not r then return nil end
+    local myPos = r.Position
+    local ok, descs = pcall(function() return workspace:GetDescendants() end)
+    if not ok then return nil end
+    for _, o in ipairs(descs) do
+        if (o:IsA("Tool") or o:IsA("Model") or o:IsA("BasePart")) then
+            local on = o.Name:lower()
+            if on:find(key, 1, true) then
+                local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart) or o
+                if pp and pp.Position then
+                    local d = (pp.Position - myPos).Magnitude
+                    if d < bd then bd = d; best = o end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- ============================================================
+-- WAYPOINTS
+-- ============================================================
 local WAYPOINTS, wpOrder = {}, {}
 local function saveWP(n)
-    local r=getRoot(); if not r or not n or n=="" then return end
-    if not WAYPOINTS[n] then table.insert(wpOrder,n) end
-    WAYPOINTS[n]=r.Position
+    local r = getRoot(); if not r or not n or n=="" then return end
+    if not WAYPOINTS[n] then table.insert(wpOrder, n) end
+    WAYPOINTS[n] = r.Position
 end
 local function delWP(n)
     if WAYPOINTS[n] then
@@ -188,11 +230,14 @@ local function delWP(n)
     end
 end
 
+-- ============================================================
+-- NPC CACHE
+-- ============================================================
 local npcCache = {}
 local KW = {
     pirate={"Pirate","Bandit","Brute","Thief","Criminal","Rogue","Buccaneer","Smoker","Clown"},
     marine={"Marine","Soldier","Officer","Captain","Vice","Commander","Guard","Sword"},
-    boss  ={"Boss","Lord","King","Queen","Captain","Admiral","Warden","Diamond","Cyborg"},
+    boss={"Boss","Lord","King","Queen","Admiral","Warden","Diamond","Cyborg"},
 }
 local function matchKw(n,l) for _,k in ipairs(l) do if n:find(k) then return true end end return false end
 local function scan(c,out)
@@ -222,8 +267,7 @@ task.spawn(function() while task.wait(1) do pcall(refresh) end end)
 
 local function nearest(tag)
     local r=getRoot(); if not r then return nil end
-    local p=r.Position
-    local best,bd=nil,math.huge
+    local p=r.Position; local best,bd=nil,math.huge
     for _,e in ipairs(npcCache) do
         if tag=="all" or e.tag==tag then
             local hrp=e.model:FindFirstChild("HumanoidRootPart")
@@ -236,38 +280,8 @@ local function nearest(tag)
     return best
 end
 
-local chestList, fruitList = {}, {}
-local function classify(o)
-    pcall(function()
-        if not (o:IsA("Model") or o:IsA("BasePart")) then return end
-        local n=o.Name:lower()
-        if n:find("chest") or n:find("crate") then chestList[o]=true
-        elseif n:find("fruit") or n:find("devil") then fruitList[o]=true end
-    end)
-end
-pcall(function() for _,o in ipairs(workspace:GetDescendants()) do classify(o) end end)
-workspace.DescendantAdded:Connect(classify)
-task.spawn(function()
-    while task.wait(2) do
-        for o in pairs(chestList) do if not o.Parent then chestList[o]=nil end end
-        for o in pairs(fruitList) do if not o.Parent then fruitList[o]=nil end end
-    end
-end)
-local function nearestIn(list,md)
-    local r=getRoot(); if not r then return nil end
-    local p=r.Position; local best,bd=nil,md or math.huge
-    for o in pairs(list) do
-        local pp=o:IsA("Model") and (o:FindFirstChild("HumanoidRootPart") or o:FindFirstChild("Handle") or o.PrimaryPart) or o
-        if pp and pp.Position then
-            local d=(pp.Position-p).Magnitude
-            if d<bd then bd=d; best=o end
-        end
-    end
-    return best
-end
-
 -- ============================================================
--- ATTACK: клик РОВНО в центр экрана после фиксации камеры
+-- ATTACK (locked cam + center click + fat hitbox)
 -- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
@@ -275,7 +289,6 @@ local function attack(npc)
     local hum = npc:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
-    -- экипируем
     local tool
     if character then
         tool = character:FindFirstChildOfClass("Tool")
@@ -287,17 +300,13 @@ local function attack(npc)
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
 
-    -- камера смотрит на NPC -> цель в центре экрана
     if camera then
-        pcall(function()
-            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, hrp.Position)
-        end)
+        pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, hrp.Position) end)
     end
 
-    -- КЛИК РОВНО ПО ЦЕНТРУ ВЬЮПОРТА
     if VirtualInput and camera then
         local vp = camera.ViewportSize
-        local cx, cy = vp.X / 2, vp.Y / 2
+        local cx, cy = vp.X/2, vp.Y/2
         pcall(function()
             VirtualInput:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
             task.wait(0.02)
@@ -326,11 +335,11 @@ local PRIO = {
 }
 task.spawn(function()
     while true do
-        local act = false
+        local act=false
         for _,p in ipairs(PRIO) do
             if p.get() then
-                act = true
-                local n = nearest(p.tag)
+                act=true
+                local n=nearest(p.tag)
                 if n then setHover(n); pcall(attack, n) end
                 break
             end
@@ -356,34 +365,87 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- AUTO FISH
+-- ============================================================
+local function findRod()
+    if not character then return nil end
+    local ok, ch = pcall(function() return character:GetChildren() end)
+    if not ok then return nil end
+    for _,t in ipairs(ch) do
+        if t:IsA("Tool") and (t.Name:lower():find("rod") or t.Name:lower():find("fishing")) then
+            return t
+        end
+    end
+    return nil
+end
+
 task.spawn(function()
-    while task.wait(0.5) do
+    local fishing = false
+    while task.wait(0.3) do
+        if state.autoFish and not fishing then
+            fishing = true
+            task.spawn(function()
+                while state.autoFish do
+                    local rod = findRod()
+                    if rod and humanoid and humanoid.Parent then
+                        -- экипируем удочку
+                        pcall(function() humanoid:EquipTool(rod) end)
+                        task.wait(0.6)
+                        -- заброс
+                        pcall(function() rod:Activate() end)
+                        -- ждём поклёвки (обычно 3–8 сек)
+                        task.wait(math.random(30, 80) / 10)
+                        -- подсекаем
+                        pcall(function() rod:Activate() end)
+                        task.wait(1.5)
+                    else
+                        task.wait(1)
+                    end
+                end
+                fishing = false
+            end)
+        end
+    end
+end)
+
+-- ============================================================
+-- AUTO CHEST / FRUIT (общий)
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.6) do
         if state.autoChest then
-            local o=nearestIn(chestList,500)
-            if o then
-                local pp=o:IsA("Model") and (o:FindFirstChild("HumanoidRootPart") or o:FindFirstChild("Handle") or o.PrimaryPart) or o
-                if pp then
-                    local r=getRoot()
-                    if r then pcall(function() r.CFrame=CFrame.new(pp.Position+Vector3.new(0,3,0)) end) end
-                    task.wait(0.1)
+            local ok, descs = pcall(function() return workspace:GetDescendants() end)
+            if ok then
+                local r = getRoot()
+                if r then
+                    for _, o in ipairs(descs) do
+                        local n = o.Name:lower()
+                        if n:find("chest") or n:find("crate") then
+                            local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart) or o
+                            if pp and pp.Position and (pp.Position - r.Position).Magnitude < 500 then
+                                tpTo(pp.Position)
+                                task.wait(0.2)
+                                break
+                            end
+                        end
+                    end
                 end
             end
         end
         if state.autoFruit then
-            local o=nearestIn(fruitList,500)
-            if o then
-                local pp=o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart) or o
-                if pp then
-                    local r=getRoot()
-                    if r then pcall(function() r.CFrame=CFrame.new(pp.Position+Vector3.new(0,3,0)) end) end
-                    task.wait(0.1)
-                end
+            local obj = findFruit(state.selectedFruit)
+            if obj then
+                tpToObject(obj)
+                task.wait(0.3)
             end
         end
     end
 end)
 
+-- ============================================================
 -- ESP
+-- ============================================================
 local espFolder = Instance.new("Folder"); espFolder.Name="BinESP"; espFolder.Parent=workspace
 local function mkESP(ad,col,txt)
     local bb=Instance.new("BillboardGui")
@@ -408,7 +470,7 @@ task.spawn(function()
                 local h=e.model:FindFirstChild("HumanoidRootPart")
                 if h then
                     seen[e.model]=true
-                    local col = e.tag=="boss" and Color3.fromRGB(255,80,80)
+                    local col=e.tag=="boss" and Color3.fromRGB(255,80,80)
                              or e.tag=="pirate" and Color3.fromRGB(255,170,70)
                              or e.tag=="marine" and Color3.fromRGB(100,160,250)
                              or Color3.fromRGB(200,200,200)
@@ -448,7 +510,9 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
 -- UI
+-- ============================================================
 local C = {
     bg=Color3.fromRGB(12,12,20), bg2=Color3.fromRGB(20,20,32),
     surface=Color3.fromRGB(28,28,44), surface2=Color3.fromRGB(40,40,60),
@@ -458,8 +522,8 @@ local C = {
     blue=Color3.fromRGB(100,160,250), text=Color3.fromRGB(248,248,255),
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
-local sg = Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV11"; sg.ResetOnSpawn=false
+local sg=Instance.new("ScreenGui")
+sg.Name="BinBloxFruitsV12"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -520,8 +584,7 @@ ob.MouseLeave:Connect(function() tw(ob,0.2,{BackgroundColor3=C.surface}) end)
 
 local WW,WH=460,560
 local main=Instance.new("Frame")
-main.Size=UDim2.new(0,WW,0,WH)
-main.Position=UDim2.new(0,20,0.5,-WH/2)
+main.Size=UDim2.new(0,WW,0,WH); main.Position=UDim2.new(0,20,0.5,-WH/2)
 main.BackgroundColor3=C.bg; main.BorderSizePixel=0; main.Visible=false
 main.Active=true; main.ClipsDescendants=true; main.Parent=sg
 crn(main,16); strk(main,C.accent3,1.2,0.55)
@@ -544,7 +607,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v11 · locked cam + fat hitbox"
+sl.BackgroundTransparency=1; sl.Text="v12 · fish + fruit tp"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -749,19 +812,23 @@ slider(pages.farm,"Hover Height",2,20,1,
     function() return state.hoverHeight end, function(v) state.hoverHeight=v end," studs")
 slider(pages.farm,"Hitbox Size",5,50,1,
     function() return state.hitboxSize end, function(v) state.hitboxSize=v end," studs")
-toggle(pages.farm,"Fat Hitbox","Enlarge NPC HRP client-side",
+toggle(pages.farm,"Fat Hitbox","Enlarge NPC HRP",
     function() return state.fatHitbox end, function(v) state.fatHitbox=v end)
-toggle(pages.farm,"Lock Camera","Force cam to look at target",
+toggle(pages.farm,"Lock Camera","Force cam on target",
     function() return state.lockCamera end, function(v) state.lockCamera=v end)
 toggle(pages.farm,"Kill Aura","Attack nearby",
     function() return state.killAura end, function(v) state.killAura=v end)
 slider(pages.farm,"Kill Aura Range",10,200,5,
     function() return state.killAuraRange end, function(v) state.killAuraRange=v end," studs")
 
+section(pages.farm,"AUTO FISH")
+toggle(pages.farm,"Auto Fish","Auto cast + reel rod",
+    function() return state.autoFish end, function(v) state.autoFish=v end)
+
 section(pages.farm,"AUTO COLLECT")
 toggle(pages.farm,"Auto Chest","TP to chests",
     function() return state.autoChest end, function(v) state.autoChest=v end)
-toggle(pages.farm,"Auto Fruit","TP to fruits",
+toggle(pages.farm,"Auto Fruit (selected)","TP to selected fruit",
     function() return state.autoFruit end, function(v) state.autoFruit=v end)
 
 section(pages.farm,"STATUS")
@@ -796,13 +863,13 @@ task.spawn(function()
             end
             hL.Text="Hover: "..(hoverActive and (hoverTarget and hoverTarget.Name or "yes") or "no")
             local act=state.autoFarmLevel or state.autoFarmPirates
-                     or state.autoFarmMarines or state.autoFarmBosses or state.killAura
+                     or state.autoFarmMarines or state.autoFarmBosses or state.killAura or state.autoFish
             sd.BackgroundColor3=act and C.green or C.red
         end)
     end
 end)
 
--- TP
+-- TP PAGE
 section(pages.tp,"SEARCH")
 local sf=Instance.new("Frame")
 sf.Size=UDim2.new(1,0,0,38); sf.BackgroundColor3=C.surface
@@ -815,7 +882,7 @@ sb.PlaceholderColor3=C.dim; sb.TextColor3=C.text
 sb.Font=Enum.Font.Gotham; sb.TextSize=12
 sb.TextXAlignment=Enum.TextXAlignment.Left; sb.ClearTextOnFocus=false; sb.Parent=sf
 local lc=Instance.new("Frame")
-lc.Size=UDim2.new(1,0,0,240); lc.BackgroundColor3=C.surface
+lc.Size=UDim2.new(1,0,0,200); lc.BackgroundColor3=C.surface
 lc.BorderSizePixel=0; lc.LayoutOrder=no(); lc.Parent=pages.tp
 crn(lc,10); strk(lc,C.surface3,1,0.5)
 local ll=Instance.new("ScrollingFrame")
@@ -854,6 +921,7 @@ local function rebuildLoc(f)
 end
 rebuildLoc("")
 sb:GetPropertyChangedSignal("Text"):Connect(function() rebuildLoc(sb.Text) end)
+
 section(pages.tp,"ACTIONS")
 action(pages.tp,"✨  Teleport Now",function()
     local l=findLoc(state.selectedTP)
@@ -863,28 +931,111 @@ action(pages.tp,"🛑  Stop Hover",function()
     if hoverTarget then restoreHitbox(hoverTarget) end
     setHover(nil); notify("Hover","Off",C.red)
 end,C.surface2)
-action(pages.tp,"🏴‍☠️  Hover Pirate",function()
-    local n=nearest("pirate")
-    if n then setHover(n); notify("Pirate","Hover: "..n.Name,C.accent2)
-    else notify("Pirate","None",C.red) end
-end,C.accent2)
-action(pages.tp,"⚓  Hover Marine",function()
-    local n=nearest("marine")
-    if n then setHover(n); notify("Marine","Hover: "..n.Name,C.blue)
-    else notify("Marine","None",C.red) end
-end,C.blue)
-action(pages.tp,"👑  Hover Boss",function()
-    local n=nearest("boss")
-    if n then setHover(n); notify("Boss","Hover: "..n.Name,C.red)
-    else notify("Boss","None",C.red) end
-end,C.red)
+
+-- ============================================================
+-- FRUIT TELEPORT SECTION
+-- ============================================================
+section(pages.tp,"FRUIT TELEPORT")
+local fSelLabel = Instance.new("TextLabel")
+fSelLabel.Size = UDim2.new(1,0,0,26); fSelLabel.BackgroundColor3 = C.surface
+fSelLabel.BorderSizePixel = 0; fSelLabel.LayoutOrder = no(); fSelLabel.Parent = pages.tp
+fSelLabel.Text = "  Selected: Dragon"
+fSelLabel.TextColor3 = C.accent2; fSelLabel.Font = Enum.Font.GothamBold
+fSelLabel.TextSize = 13; fSelLabel.TextXAlignment = Enum.TextXAlignment.Left
+crn(fSelLabel, 8); strk(fSelLabel, C.accent2, 1, 0.4)
+
+-- грид фруктов
+local fGrid = Instance.new("Frame")
+fGrid.Size = UDim2.new(1,0,0,200); fGrid.BackgroundColor3 = C.surface
+fGrid.BorderSizePixel = 0; fGrid.LayoutOrder = no(); fGrid.Parent = pages.tp
+crn(fGrid,10); strk(fGrid, C.surface3, 1, 0.5)
+local fScroll = Instance.new("ScrollingFrame")
+fScroll.Size = UDim2.new(1,-16,1,-16); fScroll.Position = UDim2.new(0,8,0,8)
+fScroll.BackgroundTransparency = 1; fScroll.BorderSizePixel = 0
+fScroll.ScrollBarThickness = 4; fScroll.ScrollBarImageColor3 = C.accent2
+fScroll.CanvasSize = UDim2.new(0,0,0,0); fScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+fScroll.Parent = fGrid
+local fGridLay = Instance.new("UIGridLayout", fScroll)
+fGridLay.CellSize = UDim2.new(0, 90, 0, 32)
+fGridLay.CellPadding = UDim2.new(0, 6, 0, 6)
+fGridLay.SortOrder = Enum.SortOrder.LayoutOrder
+
+local fBtns = {}
+local function selFruit(name)
+    state.selectedFruit = name
+    fSelLabel.Text = "  Selected: " .. name
+    for n,b in pairs(fBtns) do
+        local a = (n == name)
+        tw(b, 0.15, {
+            BackgroundColor3 = a and C.accent2 or C.surface2,
+            TextColor3 = a and Color3.fromRGB(255,255,255) or C.text,
+        })
+    end
+end
+
+for _, fname in ipairs(FRUITS) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 90, 0, 32)
+    b.BackgroundColor3 = C.surface2
+    b.Text = fname
+    b.TextColor3 = C.text
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.AutoButtonColor = false
+    b.Parent = fScroll
+    crn(b, 6)
+    b.MouseEnter:Connect(function()
+        if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface3}) end
+    end)
+    b.MouseLeave:Connect(function()
+        if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface2}) end
+    end)
+    b.MouseButton1Click:Connect(function() selFruit(fname) end)
+    fBtns[fname] = b
+end
+selFruit(state.selectedFruit)
+
+action(pages.tp,"🍎  TP to Selected Fruit",function()
+    local obj = findFruit(state.selectedFruit)
+    if obj then
+        tpToObject(obj)
+        notify("Fruit", "TP to: "..state.selectedFruit, C.accent2)
+    else
+        notify("Fruit", state.selectedFruit.." не найдено рядом", C.red)
+    end
+end, C.accent2)
+action(pages.tp,"🔄  Scan All Fruits",function()
+    local found = {}
+    local ok, descs = pcall(function() return workspace:GetDescendants() end)
+    if ok then
+        local r = getRoot(); if not r then return end
+        for _, o in ipairs(descs) do
+            for _, fname in ipairs(FRUITS) do
+                if o.Name:lower():find(fname:lower(), 1, true) then
+                    local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o.PrimaryPart) or o
+                    if pp and pp.Position then
+                        local d = (pp.Position - r.Position).Magnitude
+                        if d < 5000 then
+                            found[fname] = found[fname] or {}
+                            table.insert(found[fname], math.floor(d))
+                        end
+                    end
+                    break
+                end
+            end
+        end
+    end
+    local count = 0
+    for _ in pairs(found) do count = count + 1 end
+    notify("Fruit Scan", "Найдено типов: "..count, C.green)
+end, C.surface2)
 
 section(pages.tp,"WAYPOINTS")
 input(pages.tp,"New waypoint name...",function(name)
     if name and name~="" then saveWP(name); notify("WP","Saved: "..name,C.green); rebuildWP() end
 end,"SAVE")
 local wc=Instance.new("Frame")
-wc.Size=UDim2.new(1,0,0,200); wc.BackgroundColor3=C.surface
+wc.Size=UDim2.new(1,0,0,180); wc.BackgroundColor3=C.surface
 wc.BorderSizePixel=0; wc.LayoutOrder=no(); wc.Parent=pages.tp
 crn(wc,10); strk(wc,C.surface3,1,0.5)
 local wl=Instance.new("ScrollingFrame")
@@ -942,7 +1093,7 @@ crn(ic,10); strk(ic,C.surface3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v11\nlocked cam + fat hitbox\n\nmade by Bin & Steve\nnya~"
+it.Text="Bin's Blox Fruits Hub v12\nfish + fruit tp\n\nmade by Bin & Steve\nnya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
@@ -999,5 +1150,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v11","Loaded · fat hitbox + locked cam",C.accent)
-print("[Bin's Hub v11] loaded.")
+notify("Bin's Hub v12","Loaded · fish + fruit tp",C.accent)
+print("[Bin's Hub v12] loaded.")

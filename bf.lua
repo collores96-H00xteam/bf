@@ -1,5 +1,6 @@
--- Bin's Blox Fruits Hub v9 — SAFE ATTACK
+-- Bin's Blox Fruits Hub v10 — HOVER MODE
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local VirtualInput = nil
@@ -49,29 +50,51 @@ local function tpTo(pos)
     local gy = groundY(pos.X, pos.Z, pos.Y + 400)
     local fy = gy and (gy + 3.5) or (pos.Y + 3.5)
     pcall(function() r.CFrame = CFrame.new(pos.X, fy, pos.Z) end)
-    task.wait(0.05)
-    local gy2 = groundY(pos.X, pos.Z, fy + 30)
-    if gy2 and math.abs(gy2 + 3.5 - fy) > 2 then
-        pcall(function() r.CFrame = CFrame.new(pos.X, gy2 + 3.5, pos.Z) end)
-    end
-end
-
-local function tpToNPC(npc)
-    if not npc or not npc.Parent then return end
-    local hrp = npc:FindFirstChild("HumanoidRootPart")
-    local r = getRoot(); if not hrp or not r then return end
-    local t = hrp.Position
-    local gy = groundY(t.X, t.Z, t.Y + 30)
-    local fy = gy and (gy + 3.5) or (t.Y + 3.5)
-    pcall(function() r.CFrame = CFrame.lookAt(Vector3.new(t.X, fy, t.Z), t) end)
 end
 
 local state = {
     autoFarmLevel = false, autoFarmPirates = false, autoFarmMarines = false,
     autoFarmBosses = false, attackSpeed = 0.35, killAura = false, killAuraRange = 45,
-    safeAttackHeight = 14, selectedTP = "Pirate Island", espNPCs = false, espPlayers = false,
-    autoChest = false, autoFruit = false,
+    hoverHeight = 10, selectedTP = "Pirate Island", espNPCs = false, espPlayers = false,
+    autoChest = false, autoFruit = false, hoverMode = true,
 }
+
+-- ============================================================
+-- HOVER: постоянная цель, над которой висим
+-- ============================================================
+local hoverTarget = nil
+local hoverActive = false
+
+local function setHover(npc)
+    hoverTarget = npc
+    hoverActive = npc ~= nil
+    if not humanoid then return end
+    if hoverActive then
+        pcall(function() humanoid.PlatformStand = true end)
+    else
+        pcall(function() humanoid.PlatformStand = false end)
+    end
+end
+
+-- heartbeat-цикл: держим позицию над головой цели
+task.spawn(function()
+    while task.wait(0.03) do
+        if hoverActive and hoverTarget and hoverTarget.Parent then
+            local r = getRoot()
+            local hrp = hoverTarget:FindFirstChild("HumanoidRootPart")
+            local hum = hoverTarget:FindFirstChild("Humanoid")
+            if r and hrp and hum and hum.Health > 0 then
+                local abovePos = Vector3.new(hrp.Position.X, hrp.Position.Y + state.hoverHeight, hrp.Position.Z)
+                pcall(function() r.CFrame = CFrame.lookAt(abovePos, hrp.Position) end)
+                pcall(function() r.Velocity = Vector3.new(0, 0, 0) end)
+            else
+                hoverActive = false
+                hoverTarget = nil
+                if humanoid then pcall(function() humanoid.PlatformStand = false end) end
+            end
+        end
+    end
+end)
 
 local TP_LOCATIONS = {
     { name = "Bandit Camp",       icon = "🏕️", pos = Vector3.new(-1110, 20, 3200), sea = 1 },
@@ -102,7 +125,6 @@ local TP_LOCATIONS = {
     { name = "Castle on the Sea", icon = "🏰", pos = Vector3.new(-6000, 20, -14000), sea = 3 },
     { name = "Sea of Treats",     icon = "🍭", pos = Vector3.new(5000, 20, -15000), sea = 3 },
 }
-
 local function findLoc(name)
     for _, l in ipairs(TP_LOCATIONS) do if l.name == name then return l end end
 end
@@ -207,21 +229,15 @@ local function nearestIn(list, md)
 end
 
 -- ============================================================
--- АТАКА СВЕРХУ (safe attack)
+-- АТАКА (без телепорта — просто бьёт по цели, hover держит позицию)
 -- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
-    local r = getRoot(); if not r then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
     local hum = npc:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
-    local targetPos = hrp.Position
-    -- ТП прямо над НПС на безопасную высоту, смотрим вниз
-    local abovePos = Vector3.new(targetPos.X, targetPos.Y + state.safeAttackHeight, targetPos.Z)
-    pcall(function() r.CFrame = CFrame.lookAt(abovePos, targetPos) end)
-
-    -- экипируем оружие
+    -- экипируем
     local tool
     if character then
         tool = character:FindFirstChildOfClass("Tool")
@@ -233,9 +249,13 @@ local function attack(npc)
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
 
-    -- клик мышью по НПС
+    -- смотрим на цель
+    local r = getRoot()
+    if r then pcall(function() r.CFrame = CFrame.lookAt(r.Position, hrp.Position) end) end
+
+    -- клик по экранной позиции
     if VirtualInput and camera then
-        local ok, sp, os = pcall(function() return camera:WorldToViewportPoint(targetPos) end)
+        local ok, sp, os = pcall(function() return camera:WorldToViewportPoint(hrp.Position) end)
         if ok and os then
             pcall(function()
                 VirtualInput:SendMouseButtonEvent(sp.X, sp.Y, 0, true, game, 1)
@@ -244,7 +264,6 @@ local function attack(npc)
             end)
         end
     end
-
     if tool then pcall(function() tool:Activate() end) end
 
     -- скиллы
@@ -272,9 +291,15 @@ task.spawn(function()
             if p.get() then
                 act = true
                 local n = nearest(p.tag)
-                if n then pcall(attack, n) end
+                if n then
+                    setHover(n)
+                    pcall(attack, n)
+                end
                 break
             end
+        end
+        if not act then
+            setHover(nil)
         end
         task.wait(act and state.attackSpeed or 0.2)
     end
@@ -323,7 +348,6 @@ task.spawn(function()
     end
 end)
 
--- ESP
 local espFolder = Instance.new("Folder")
 espFolder.Name = "BinESP"; espFolder.Parent = workspace
 local function mkESP(ad, col, txt)
@@ -392,7 +416,6 @@ task.spawn(function()
     end
 end)
 
--- UI
 local C = {
     bg=Color3.fromRGB(12,12,20), bg2=Color3.fromRGB(20,20,32),
     surface=Color3.fromRGB(28,28,44), surface2=Color3.fromRGB(40,40,60),
@@ -403,7 +426,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg = Instance.new("ScreenGui")
-sg.Name = "BinBloxFruitsV9"; sg.ResetOnSpawn = false
+sg.Name = "BinBloxFruitsV10"; sg.ResetOnSpawn = false
 sg.IgnoreGuiInset = true; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent = playerGui
 local function tw(o, t, p) TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), p):Play() end
@@ -446,7 +469,6 @@ local function notify(title, text, col)
     end)
 end
 
--- Кнопка открытия — слева сверху
 local ob = Instance.new("TextButton")
 ob.Size = UDim2.new(0, 140, 0, 48); ob.Position = UDim2.new(0, 20, 0, 100)
 ob.BackgroundColor3 = C.surface; ob.Text = ""; ob.AutoButtonColor = false
@@ -463,7 +485,6 @@ ot.TextXAlignment = Enum.TextXAlignment.Left; ot.Parent = ob
 ob.MouseEnter:Connect(function() tw(ob, 0.2, { BackgroundColor3 = C.surface2 }) end)
 ob.MouseLeave:Connect(function() tw(ob, 0.2, { BackgroundColor3 = C.surface }) end)
 
--- Главное окно — тоже слева
 local WW, WH = 460, 560
 local main = Instance.new("Frame")
 main.Size = UDim2.new(0, WW, 0, WH)
@@ -478,13 +499,11 @@ tb.BorderSizePixel = 0; tb.Parent = main; crn(tb, 16)
 local tbf = Instance.new("Frame", tb)
 tbf.Size = UDim2.new(1, 0, 0, 14); tbf.Position = UDim2.new(0, 0, 1, -14)
 tbf.BackgroundColor3 = C.surface; tbf.BorderSizePixel = 0
-
 local lg = Instance.new("TextLabel")
 lg.Size = UDim2.new(0, 40, 0, 40); lg.Position = UDim2.new(0, 14, 0.5, -20)
 lg.BackgroundColor3 = C.surface2; lg.Text = "⚡"; lg.TextColor3 = C.accent
 lg.Font = Enum.Font.GothamBold; lg.TextSize = 22; lg.Parent = tb
 crn(lg, 10); strk(lg, C.accent, 1, 0.4)
-
 local tl = Instance.new("TextLabel")
 tl.Size = UDim2.new(1, -140, 0, 20); tl.Position = UDim2.new(0, 64, 0, 12)
 tl.BackgroundTransparency = 1; tl.Text = "Bin's Blox Fruits"
@@ -492,16 +511,15 @@ tl.TextColor3 = C.text; tl.Font = Enum.Font.GothamBold; tl.TextSize = 15
 tl.TextXAlignment = Enum.TextXAlignment.Left; tl.Parent = tb
 local sl = Instance.new("TextLabel")
 sl.Size = UDim2.new(1, -140, 0, 16); sl.Position = UDim2.new(0, 64, 0, 30)
-sl.BackgroundTransparency = 1; sl.Text = "v9 · safe attack"
+sl.BackgroundTransparency = 1; sl.Text = "v10 · hover mode"
 sl.TextColor3 = C.sub; sl.Font = Enum.Font.Gotham; sl.TextSize = 11
 sl.TextXAlignment = Enum.TextXAlignment.Left; sl.Parent = tb
-
 local cb = Instance.new("TextButton")
 cb.Size = UDim2.new(0, 32, 0, 32); cb.Position = UDim2.new(1, -46, 0.5, -16)
 cb.BackgroundColor3 = C.surface2; cb.Text = "✕"; cb.TextColor3 = C.sub
 cb.Font = Enum.Font.GothamBold; cb.TextSize = 14; cb.AutoButtonColor = false; cb.Parent = tb
 crn(cb, 8)
-cb.MouseEnter:Connect(function() tw(cb, 0.15, { BackgroundColor3 = C.red, TextColor3 = Color3.fromRGB(255, 255, 255) }) end)
+cb.MouseEnter:Connect(function() tw(cb, 0.15, { BackgroundColor3 = C.red, TextColor3 = Color3.fromRGB(255,255,255) }) end)
 cb.MouseLeave:Connect(function() tw(cb, 0.15, { BackgroundColor3 = C.surface2, TextColor3 = C.sub }) end)
 
 local tabBar = Instance.new("Frame")
@@ -511,7 +529,6 @@ local pill = Instance.new("Frame")
 pill.Size = UDim2.new(0.25, -6, 1, -8); pill.Position = UDim2.new(0, 4, 0, 4)
 pill.BackgroundColor3 = C.accent; pill.BorderSizePixel = 0; pill.ZIndex = 1; pill.Parent = tabBar
 crn(pill, 9)
-
 local pages, tabs = {}, {}
 local TN = { "farm", "tp", "visual", "misc" }
 local TL = { "⚔  FARM", "🌀  TP", "👁  VISUAL", "⚙  MISC" }
@@ -534,7 +551,6 @@ for i, name in ipairs(TN) do
     b.MouseButton1Click:Connect(function() selTab(name) end)
     tabs[name] = b
 end
-
 local ca = Instance.new("Frame")
 ca.Size = UDim2.new(1, -32, 1, -180); ca.Position = UDim2.new(0, 16, 0, 120)
 ca.BackgroundTransparency = 1; ca.ClipsDescendants = true; ca.Parent = main
@@ -554,7 +570,6 @@ selTab("farm")
 
 local ordr = 0
 local function no() ordr = ordr + 1; return ordr end
-
 local function section(parent, title)
     local f = Instance.new("Frame")
     f.Size = UDim2.new(1, 0, 0, 24); f.BackgroundTransparency = 1
@@ -568,7 +583,6 @@ local function section(parent, title)
     l.Font = Enum.Font.GothamBold; l.TextSize = 11
     l.TextXAlignment = Enum.TextXAlignment.Left; l.Parent = f
 end
-
 local function toggle(parent, name, desc, get, set)
     local c = Instance.new("Frame")
     c.Size = UDim2.new(1, 0, 0, 56); c.BackgroundColor3 = C.surface
@@ -606,7 +620,6 @@ local function toggle(parent, name, desc, get, set)
     rf(false)
     hb.MouseButton1Click:Connect(function() set(not get()); rf(true) end)
 end
-
 local function slider(parent, name, mn, mx, st, get, set, suf)
     suf = suf or ""
     local c = Instance.new("Frame")
@@ -646,7 +659,6 @@ local function slider(parent, name, mn, mx, st, get, set, suf)
     mi.MouseButton1Click:Connect(function() up(get() - st) end)
     pl.MouseButton1Click:Connect(function() up(get() + st) end)
 end
-
 local function action(parent, text, cb2, col)
     col = col or C.accent
     local b = Instance.new("TextButton")
@@ -662,7 +674,6 @@ local function action(parent, text, cb2, col)
         end
     end)
 end
-
 local function input(parent, ph, cb2, bt)
     bt = bt or "OK"
     local c = Instance.new("Frame")
@@ -686,7 +697,6 @@ local function input(parent, ph, cb2, bt)
     end)
 end
 
--- FARM
 section(pages.farm, "FARMING")
 toggle(pages.farm, "Auto Farm Level", "Attack any nearby NPC",
     function() return state.autoFarmLevel end, function(v) state.autoFarmLevel = v end)
@@ -697,11 +707,11 @@ toggle(pages.farm, "Auto Farm Marines", "Prioritize marine NPCs",
 toggle(pages.farm, "Auto Farm Bosses", "Prioritize boss NPCs",
     function() return state.autoFarmBosses end, function(v) state.autoFarmBosses = v end)
 
-section(pages.farm, "COMBAT")
+section(pages.farm, "COMBAT / HOVER")
 slider(pages.farm, "Attack Speed", 0.1, 2.0, 0.05,
     function() return state.attackSpeed end, function(v) state.attackSpeed = v end, "s")
-slider(pages.farm, "Safe Attack Height", 5, 30, 1,
-    function() return state.safeAttackHeight end, function(v) state.safeAttackHeight = v end, " studs")
+slider(pages.farm, "Hover Height", 3, 25, 1,
+    function() return state.hoverHeight end, function(v) state.hoverHeight = v end, " studs")
 toggle(pages.farm, "Kill Aura", "Attack NPCs within range",
     function() return state.killAura end, function(v) state.killAura = v end)
 slider(pages.farm, "Kill Aura Range", 10, 200, 5,
@@ -728,16 +738,10 @@ hpL.Size = UDim2.new(1, -40, 0, 20); hpL.Position = UDim2.new(0, 16, 0, 30)
 hpL.BackgroundTransparency = 1; hpL.Text = "HP: -"; hpL.TextColor3 = C.sub
 hpL.Font = Enum.Font.Gotham; hpL.TextSize = 12
 hpL.TextXAlignment = Enum.TextXAlignment.Left; hpL.Parent = sc
-local hbBg = Instance.new("Frame")
-hbBg.Size = UDim2.new(1, -32, 0, 6); hbBg.Position = UDim2.new(0, 16, 0, 54)
-hbBg.BackgroundColor3 = C.surface3; hbBg.BorderSizePixel = 0; hbBg.Parent = sc; crn(hbBg, 3)
-local hbF = Instance.new("Frame")
-hbF.Size = UDim2.new(1, 0, 1, 0); hbF.BackgroundColor3 = C.green
-hbF.BorderSizePixel = 0; hbF.Parent = hbBg; crn(hbF, 3)
 local pL = Instance.new("TextLabel")
-pL.Size = UDim2.new(1, -40, 0, 20); pL.Position = UDim2.new(0, 16, 0, 70)
-pL.BackgroundTransparency = 1; pL.Text = "Pos: -"; pL.TextColor3 = C.sub
-pL.Font = Enum.Font.Gotham; pL.TextSize = 11
+pL.Size = UDim2.new(1, -40, 0, 20); pL.Position = UDim2.new(0, 16, 0, 60)
+pL.BackgroundTransparency = 1; pL.Text = "Hover: -"; pL.TextColor3 = C.sub
+pL.Font = Enum.Font.Gotham; pL.TextSize = 12
 pL.TextXAlignment = Enum.TextXAlignment.Left; pL.Parent = sc
 local sd = Instance.new("Frame")
 sd.Size = UDim2.new(0, 8, 0, 8); sd.Position = UDim2.new(1, -22, 0, 16)
@@ -746,14 +750,10 @@ task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
             ncL.Text = "NPCs: " .. tostring(#npcCache)
-            local r = getRoot()
-            if humanoid and humanoid.Parent and r then
+            if humanoid and humanoid.Parent then
                 hpL.Text = string.format("HP: %d / %d", math.floor(humanoid.Health), math.floor(humanoid.MaxHealth))
-                local rt = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
-                hbF.Size = UDim2.new(rt, 0, 1, 0)
-                hbF.BackgroundColor3 = rt > 0.5 and C.green or (rt > 0.25 and C.accent or C.red)
-                pL.Text = string.format("Pos: %.0f, %.0f, %.0f", r.Position.X, r.Position.Y, r.Position.Z)
             end
+            pL.Text = "Hover: " .. (hoverActive and (hoverTarget and hoverTarget.Name or "yes") or "no")
             local act = state.autoFarmLevel or state.autoFarmPirates
                      or state.autoFarmMarines or state.autoFarmBosses or state.killAura
             sd.BackgroundColor3 = act and C.green or C.red
@@ -761,7 +761,6 @@ task.spawn(function()
     end
 end)
 
--- TP PAGE
 section(pages.tp, "SEARCH")
 local sf = Instance.new("Frame")
 sf.Size = UDim2.new(1, 0, 0, 38); sf.BackgroundColor3 = C.surface
@@ -769,11 +768,10 @@ sf.BorderSizePixel = 0; sf.LayoutOrder = no(); sf.Parent = pages.tp
 crn(sf, 10); strk(sf, C.surface3, 1, 0.5)
 local sb = Instance.new("TextBox")
 sb.Size = UDim2.new(1, -32, 1, -8); sb.Position = UDim2.new(0, 16, 0, 4)
-sb.BackgroundTransparency = 1; sb.Text = ""; sb.PlaceholderText = "🔍  Search..."
+sb.BackgroundTransparency = 1; sb.Text = ""; sb.PlaceholderText = "🔍 Search..."
 sb.PlaceholderColor3 = C.dim; sb.TextColor3 = C.text
 sb.Font = Enum.Font.Gotham; sb.TextSize = 12
 sb.TextXAlignment = Enum.TextXAlignment.Left; sb.ClearTextOnFocus = false; sb.Parent = sf
-
 local lc = Instance.new("Frame")
 lc.Size = UDim2.new(1, 0, 0, 240); lc.BackgroundColor3 = C.surface
 lc.BorderSizePixel = 0; lc.LayoutOrder = no(); lc.Parent = pages.tp
@@ -821,26 +819,29 @@ local function rebuildLoc(f)
 end
 rebuildLoc("")
 sb:GetPropertyChangedSignal("Text"):Connect(function() rebuildLoc(sb.Text) end)
-
 section(pages.tp, "ACTIONS")
 action(pages.tp, "✨  Teleport Now (precise)", function()
     local l = findLoc(state.selectedTP)
     if l then tpTo(l.pos); notify("Teleport", "Warped to " .. l.name, C.accent3) end
 end, C.accent3)
-action(pages.tp, "🏴‍☠️  TP to Nearest Pirate", function()
+action(pages.tp, "🛑  Stop Hover", function()
+    setHover(nil)
+    notify("Hover", "Off", C.red)
+end, C.surface2)
+action(pages.tp, "🏴‍☠️  TP+Hover Nearest Pirate", function()
     local n = nearest("pirate")
-    if n then tpToNPC(n); notify("Pirate", "Found: " .. n.Name, C.accent2)
-    else notify("Pirate", "No pirates nearby", C.red) end
+    if n then setHover(n); notify("Pirate", "Hovering: " .. n.Name, C.accent2)
+    else notify("Pirate", "None", C.red) end
 end, C.accent2)
-action(pages.tp, "⚓  TP to Nearest Marine", function()
+action(pages.tp, "⚓  TP+Hover Nearest Marine", function()
     local n = nearest("marine")
-    if n then tpToNPC(n); notify("Marine", "Found: " .. n.Name, C.blue)
-    else notify("Marine", "No marines nearby", C.red) end
+    if n then setHover(n); notify("Marine", "Hovering: " .. n.Name, C.blue)
+    else notify("Marine", "None", C.red) end
 end, C.blue)
-action(pages.tp, "👑  TP to Nearest Boss", function()
+action(pages.tp, "👑  TP+Hover Nearest Boss", function()
     local n = nearest("boss")
-    if n then tpToNPC(n); notify("Boss", "Found: " .. n.Name, C.red)
-    else notify("Boss", "No bosses nearby", C.red) end
+    if n then setHover(n); notify("Boss", "Hovering: " .. n.Name, C.red)
+    else notify("Boss", "None", C.red) end
 end, C.red)
 
 section(pages.tp, "WAYPOINTS")
@@ -849,7 +850,6 @@ input(pages.tp, "New waypoint name...", function(name)
         saveWP(name); notify("Waypoint", "Saved: " .. name, C.green); rebuildWP()
     end
 end, "SAVE")
-
 local wc = Instance.new("Frame")
 wc.Size = UDim2.new(1, 0, 0, 200); wc.BackgroundColor3 = C.surface
 wc.BorderSizePixel = 0; wc.LayoutOrder = no(); wc.Parent = pages.tp
@@ -863,7 +863,7 @@ local wll = Instance.new("UIListLayout", wl)
 wll.Padding = UDim.new(0, 5); wll.SortOrder = Enum.SortOrder.LayoutOrder
 local wEmpty = Instance.new("TextLabel")
 wEmpty.Size = UDim2.new(1, -20, 0, 30); wEmpty.Position = UDim2.new(0, 10, 0, 10)
-wEmpty.BackgroundTransparency = 1; wEmpty.Text = "No waypoints yet, ня~"
+wEmpty.BackgroundTransparency = 1; wEmpty.Text = "No waypoints, ня~"
 wEmpty.TextColor3 = C.dim; wEmpty.Font = Enum.Font.Gotham; wEmpty.TextSize = 12
 wEmpty.TextXAlignment = Enum.TextXAlignment.Left; wEmpty.Parent = wl
 function rebuildWP()
@@ -881,7 +881,7 @@ function rebuildWP()
         tb2.TextXAlignment = Enum.TextXAlignment.Left; tb2.AutoButtonColor = false; tb2.Parent = row
         tb2.MouseButton1Click:Connect(function()
             local p = WAYPOINTS[name]
-            if p then tpTo(p); notify("Waypoint", "Warped to: " .. name, C.green) end
+            if p then tpTo(p); notify("Waypoint", "Warped: " .. name, C.green) end
         end)
         local db = Instance.new("TextButton")
         db.Size = UDim2.new(0, 30, 1, -8); db.Position = UDim2.new(1, -38, 0, 4)
@@ -895,14 +895,12 @@ function rebuildWP()
 end
 rebuildWP()
 
--- VISUAL
 section(pages.visual, "ESP")
 toggle(pages.visual, "ESP NPCs", "Boxes over enemies",
     function() return state.espNPCs end, function(v) state.espNPCs = v end)
 toggle(pages.visual, "ESP Players", "Boxes over players",
     function() return state.espPlayers end, function(v) state.espPlayers = v end)
 
--- MISC
 section(pages.misc, "INFO")
 local ic = Instance.new("Frame")
 ic.Size = UDim2.new(1, 0, 0, 130); ic.BackgroundColor3 = C.surface
@@ -911,7 +909,7 @@ crn(ic, 10); strk(ic, C.surface3, 1, 0.5)
 local it = Instance.new("TextLabel")
 it.Size = UDim2.new(1, -20, 1, -16); it.Position = UDim2.new(0, 16, 0, 8)
 it.BackgroundTransparency = 1
-it.Text = "Bin's Blox Fruits Hub v9\nsafe attack\n\nmade by Bin & Steve\nnya~"
+it.Text = "Bin's Blox Fruits Hub v10\nhover mode\n\nmade by Bin & Steve\nnya~"
 it.TextColor3 = C.sub; it.Font = Enum.Font.Gotham; it.TextSize = 12
 it.TextXAlignment = Enum.TextXAlignment.Left
 it.TextYAlignment = Enum.TextYAlignment.Top; it.Parent = ic
@@ -919,7 +917,6 @@ action(pages.misc, "🔄  Refresh NPC Cache", function()
     refresh(); notify("Cache", "Refreshed · " .. #npcCache .. " NPCs", C.green)
 end, C.surface2)
 
--- FOOTER
 local ft = Instance.new("Frame")
 ft.Size = UDim2.new(1, -32, 0, 32); ft.Position = UDim2.new(0, 16, 1, -44)
 ft.BackgroundColor3 = C.bg2; ft.BorderSizePixel = 0; ft.Parent = main; crn(ft, 10)
@@ -929,7 +926,6 @@ ftL.BackgroundTransparency = 1; ftL.Text = "made by Bin & Steve  ·  nya~"
 ftL.TextColor3 = C.dim; ftL.Font = Enum.Font.Gotham; ftL.TextSize = 11
 ftL.TextXAlignment = Enum.TextXAlignment.Left; ftL.Parent = ft
 
--- TOGGLE / DRAG
 local isOpen = false
 local function tglW()
     isOpen = not isOpen
@@ -970,5 +966,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v9", "Loaded · click ⚡ BF HUB", C.accent)
-print("[Bin's Hub v9] loaded. Safe attack + left UI.")
+notify("Bin's Hub v10", "Loaded · hover mode on", C.accent)
+print("[Bin's Hub v10] loaded. Hover mode.")

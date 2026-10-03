@@ -1,4 +1,4 @@
--- Bin's Blox Fruits Hub v13 — FLY + HIGH SAFE HOVER
+-- Bin's Blox Fruits Hub v14 — FIXED FLY + COMBAT DROP
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
@@ -50,13 +50,7 @@ local function tpTo(pos)
     local gy = groundY(pos.X, pos.Z, pos.Y + 500)
     if not gy then gy = groundY(pos.X, pos.Z, 1000) end
     if not gy then gy = pos.Y end
-    local fy = gy + 3.5
-    pcall(function() r.CFrame = CFrame.new(pos.X, fy, pos.Z) end)
-    task.wait(0.05)
-    local gy2 = groundY(pos.X, pos.Z, fy + 20)
-    if gy2 and math.abs(gy2 + 3.5 - fy) > 2 then
-        pcall(function() r.CFrame = CFrame.new(pos.X, gy2 + 3.5, pos.Z) end)
-    end
+    pcall(function() r.CFrame = CFrame.new(pos.X, gy + 3.5, pos.Z) end)
 end
 
 local function tpToObject(obj)
@@ -69,49 +63,65 @@ end
 local state = {
     autoFarmLevel=false, autoFarmPirates=false, autoFarmMarines=false, autoFarmBosses=false,
     attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=35,
+    strikeHeight=8,
     selectedTP="Pirate Island", espNPCs=false, espPlayers=false,
     autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=60, lockCamera=true,
     autoFish=false, selectedFruit="Dragon",
-    fly=false, flySpeed=80,
+    fly=false, flySpeed=120, combatDrop=true,
 }
 
 -- ============================================================
--- FAT HITBOX
+-- FAT HITBOX — enlarge HRP + all body parts, set CanQuery
 -- ============================================================
-local origSizes = setmetatable({}, {__mode="k"})
+local origData = setmetatable({}, {__mode="k"})
 local function enlargeHitbox(npc)
     if not state.fatHitbox or not npc then return end
-    local hrp = npc:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    if not origSizes[hrp] then origSizes[hrp] = hrp.Size end
     local s = state.hitboxSize
-    pcall(function()
-        hrp.Size = Vector3.new(s, s, s)
-        hrp.CanCollide = false
-        hrp.Massless = true
-        hrp.Transparency = 0.5
-    end)
+    for _, p in ipairs(npc:GetDescendants()) do
+        if p:IsA("BasePart") then
+            if not origData[p] then
+                origData[p] = {size = p.Size, canq = p.CanQuery, cant = p.CanTouch, coll = p.CanCollide, trans = p.Transparency}
+            end
+            pcall(function()
+                if p.Name == "HumanoidRootPart" then
+                    p.Size = Vector3.new(s, s, s)
+                else
+                    p.Size = p.Size * 2
+                end
+                p.CanQuery = true
+                p.CanTouch = true
+                p.CanCollide = false
+                p.Massless = true
+                p.Transparency = math.max(p.Transparency, 0.5)
+            end)
+        end
+    end
 end
+
 local function restoreHitbox(npc)
     if not npc then return end
-    local hrp = npc:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local orig = origSizes[hrp]
-    if orig then
-        pcall(function()
-            hrp.Size = orig
-            hrp.CanCollide = true
-            hrp.Massless = false
-            hrp.Transparency = 1
-        end)
-        origSizes[hrp] = nil
+    for _, p in ipairs(npc:GetDescendants()) do
+        local o = origData[p]
+        if o then
+            pcall(function()
+                p.Size = o.size
+                p.CanQuery = o.canq
+                p.CanTouch = o.cant
+                p.CanCollide = o.coll
+                p.Transparency = o.trans
+                p.Massless = false
+            end)
+            origData[p] = nil
+        end
     end
 end
 
 -- ============================================================
--- HOVER (высоко над NPC — safe distance)
+-- HOVER + COMBAT DROP
 -- ============================================================
 local hoverTarget, hoverActive = nil, false
+local dropping = false
+
 local function setHover(npc)
     if hoverActive and hoverTarget and hoverTarget ~= npc then restoreHitbox(hoverTarget) end
     hoverTarget = npc
@@ -120,85 +130,77 @@ local function setHover(npc)
     if hoverActive and npc then enlargeHitbox(npc) end
 end
 
-task.spawn(function()
-    while task.wait(0.03) do
-        if hoverActive and hoverTarget and hoverTarget.Parent then
-            local r = getRoot()
-            local hrp = hoverTarget:FindFirstChild("HumanoidRootPart")
-            local hum = hoverTarget:FindFirstChild("Humanoid")
-            if r and hrp and hum and hum.Health > 0 then
-                local target = hrp.Position
-                local above = Vector3.new(target.X, target.Y + state.hoverHeight, target.Z)
-                pcall(function() r.CFrame = CFrame.lookAt(above, target) end)
-                pcall(function() r.Velocity = Vector3.new(0,0,0) end)
-                if state.lockCamera and camera then
-                    pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target) end)
-                end
-            else
-                restoreHitbox(hoverTarget)
-                hoverActive = false; hoverTarget = nil
-                if humanoid then pcall(function() humanoid.PlatformStand = false end) end
-            end
-        end
+RunService.Heartbeat:Connect(function()
+    if not (hoverActive and hoverTarget and hoverTarget.Parent) then return end
+    if state.fly then return end -- fly перебивает hover
+    local r = getRoot()
+    local hrp = hoverTarget:FindFirstChild("HumanoidRootPart")
+    local hum = hoverTarget:FindFirstChild("Humanoid")
+    if not (r and hrp and hum and hum.Health > 0) then
+        restoreHitbox(hoverTarget)
+        hoverActive = false; hoverTarget = nil
+        if humanoid then pcall(function() humanoid.PlatformStand = false end) end
+        return
+    end
+    local target = hrp.Position
+    local h = dropping and state.strikeHeight or state.hoverHeight
+    local above = Vector3.new(target.X, target.Y + h, target.Z)
+    pcall(function() r.CFrame = CFrame.lookAt(above, target) end)
+    pcall(function() r.Velocity = Vector3.new(0,0,0) end)
+    if state.lockCamera and camera then
+        pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target) end)
     end
 end)
 
 -- ============================================================
--- FLY (WASD + Space/Ctrl)
+-- FLY — RenderStepped + CFrame (100% reliable)
 -- ============================================================
-local flyBV, flyBG = nil, nil
-local function stopFly()
-    if flyBV then flyBV:Destroy(); flyBV = nil end
-    if flyBG then flyBG:Destroy(); flyBG = nil end
-    if humanoid then pcall(function() humanoid.PlatformStand = false end) end
+local flyConn = nil
+local function startFly()
+    local r = getRoot(); if not r or not humanoid then return end
+    pcall(function() humanoid.PlatformStand = true end)
+    pcall(function() humanoid.WalkSpeed = 0 end)
+    pcall(function() humanoid.JumpPower = 0 end)
+    if flyConn then flyConn:Disconnect() end
+    flyConn = RunService.RenderStepped:Connect(function(dt)
+        if not state.fly then return end
+        local rr = getRoot(); if not rr then return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local move = Vector3.new(0,0,0)
+        if UserInput:IsKeyDown(Enum.KeyCode.W) then move = move + cam.CFrame.LookVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.S) then move = move - cam.CFrame.LookVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.A) then move = move - cam.CFrame.RightVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.D) then move = move + cam.CFrame.RightVector end
+        if UserInput:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
+        if UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
+        if move.Magnitude > 0 then
+            move = move.Unit * state.flySpeed * dt
+        end
+        pcall(function()
+            rr.CFrame = rr.CFrame + move
+            rr.Velocity = Vector3.new(0,0,0)
+        end)
+    end)
 end
 
-local function startFly()
-    local r = getRoot()
-    if not r or not humanoid then return end
-    pcall(function() humanoid.PlatformStand = true end)
-    flyBV = Instance.new("BodyVelocity")
-    flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    flyBV.Velocity = Vector3.new(0, 0, 0)
-    flyBV.Parent = r
-    flyBG = Instance.new("BodyGyro")
-    flyBG.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    flyBG.P = 1000
-    flyBG.D = 50
-    flyBG.CFrame = r.CFrame
-    flyBG.Parent = r
+local function stopFly()
+    if flyConn then flyConn:Disconnect(); flyConn = nil end
+    if humanoid then
+        pcall(function()
+            humanoid.PlatformStand = false
+            humanoid.WalkSpeed = 16
+            humanoid.JumpPower = 50
+        end)
+    end
 end
 
 task.spawn(function()
-    local lastFly = false
-    while task.wait(0.05) do
-        if state.fly and not lastFly then
-            startFly()
-        elseif not state.fly and lastFly then
-            stopFly()
-        end
-        lastFly = state.fly
-
-        if state.fly and flyBV and flyBG then
-            local r = getRoot()
-            if not r or not humanoid then task.wait(0.1) continue end
-            local move = Vector3.new(0,0,0)
-            local speed = state.flySpeed
-            if UserInput:IsKeyDown(Enum.KeyCode.W) then move = move + camera.CFrame.LookVector end
-            if UserInput:IsKeyDown(Enum.KeyCode.S) then move = move - camera.CFrame.LookVector end
-            if UserInput:IsKeyDown(Enum.KeyCode.A) then move = move - camera.CFrame.RightVector end
-            if UserInput:IsKeyDown(Enum.KeyCode.D) then move = move + camera.CFrame.RightVector end
-            if UserInput:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
-            if UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
-
-            if move.Magnitude > 0 then
-                move = move.Unit * speed
-            end
-            pcall(function()
-                flyBV.Velocity = move
-                flyBG.CFrame = CFrame.new(r.Position, r.Position + camera.CFrame.LookVector)
-            end)
-        end
+    local last = false
+    while task.wait(0.1) do
+        if state.fly and not last then startFly() end
+        if not state.fly and last then stopFly() end
+        last = state.fly
     end
 end)
 
@@ -236,9 +238,6 @@ local TP_LOCATIONS = {
 }
 local function findLoc(n) for _,l in ipairs(TP_LOCATIONS) do if l.name==n then return l end end end
 
--- ============================================================
--- FRUITS
--- ============================================================
 local FRUITS = {
     "Dragon","Leopard","Kitsune","Dough","Venom","Shadow","Control",
     "Spirit","Mammoth","T-Rex","Gas","Portal","Buddha","Phoenix",
@@ -271,9 +270,6 @@ local function findFruit(name)
     return best
 end
 
--- ============================================================
--- WAYPOINTS
--- ============================================================
 local WAYPOINTS, wpOrder = {}, {}
 local function saveWP(n)
     local r = getRoot(); if not r or not n or n=="" then return end
@@ -287,9 +283,6 @@ local function delWP(n)
     end
 end
 
--- ============================================================
--- NPC CACHE
--- ============================================================
 local npcCache = {}
 local KW = {
     pirate={"Pirate","Bandit","Brute","Thief","Criminal","Rogue","Buccaneer","Smoker","Clown"},
@@ -338,7 +331,7 @@ local function nearest(tag)
 end
 
 -- ============================================================
--- ATTACK
+-- ATTACK — с Combat Drop если high hover
 -- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
@@ -356,6 +349,15 @@ local function attack(npc)
         end
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
+
+    -- Combat Drop: временно ныряем на strikeHeight
+    local r = getRoot()
+    if state.combatDrop and r and state.hoverHeight > state.strikeHeight + 3 then
+        local target = hrp.Position
+        local divePos = Vector3.new(target.X, target.Y + state.strikeHeight, target.Z)
+        pcall(function() r.CFrame = CFrame.lookAt(divePos, target) end)
+        task.wait(0.05)
+    end
 
     if camera then
         pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, hrp.Position) end)
@@ -422,9 +424,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- AUTO FISH
--- ============================================================
 local function findRod()
     if not character then return nil end
     local ok, ch = pcall(function() return character:GetChildren() end)
@@ -462,9 +462,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- AUTO CHEST / FRUIT
--- ============================================================
 task.spawn(function()
     while task.wait(0.6) do
         if state.autoChest then
@@ -488,17 +486,12 @@ task.spawn(function()
         end
         if state.autoFruit then
             local obj = findFruit(state.selectedFruit)
-            if obj then
-                tpToObject(obj)
-                task.wait(0.3)
-            end
+            if obj then tpToObject(obj); task.wait(0.3) end
         end
     end
 end)
 
--- ============================================================
 -- ESP
--- ============================================================
 local espFolder = Instance.new("Folder"); espFolder.Name="BinESP"; espFolder.Parent=workspace
 local function mkESP(ad,col,txt)
     local bb=Instance.new("BillboardGui")
@@ -563,9 +556,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- UI
--- ============================================================
 local C = {
     bg=Color3.fromRGB(12,12,20), bg2=Color3.fromRGB(20,20,32),
     surface=Color3.fromRGB(28,28,44), surface2=Color3.fromRGB(40,40,60),
@@ -576,7 +567,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV13"; sg.ResetOnSpawn=false
+sg.Name="BinBloxFruitsV14"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -660,7 +651,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v13 · fly + high safe hover"
+sl.BackgroundTransparency=1; sl.Text="v14 · fixed fly + combat drop"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -818,10 +809,7 @@ local function action(parent,text,cb2,col)
     crn(b,10)
     b.MouseButton1Click:Connect(function()
         local ok,err=pcall(cb2)
-        if not ok then
-            warn("[BF Hub] "..tostring(err))
-            notify("Error",tostring(err),C.red)
-        end
+        if not ok then warn("[BF Hub] "..tostring(err)); notify("Error",tostring(err),C.red) end
     end)
 end
 local function input(parent,ph,cb2,bt)
@@ -849,7 +837,7 @@ end
 
 -- FARM
 section(pages.farm,"FARMING")
-toggle(pages.farm,"Auto Farm Level","Attack any NPC",
+toggle(pages.farm,"Auto Farm Level","Any NPC",
     function() return state.autoFarmLevel end, function(v) state.autoFarmLevel=v end)
 toggle(pages.farm,"Auto Farm Pirates","Prioritize pirates",
     function() return state.autoFarmPirates end, function(v) state.autoFarmPirates=v end)
@@ -861,11 +849,15 @@ toggle(pages.farm,"Auto Farm Bosses","Prioritize bosses",
 section(pages.farm,"COMBAT / HOVER")
 slider(pages.farm,"Attack Speed",0.1,2.0,0.05,
     function() return state.attackSpeed end, function(v) state.attackSpeed=v end,"s")
-slider(pages.farm,"Hover Height (safe)",5,80,1,
+slider(pages.farm,"Hover Height",5,80,1,
     function() return state.hoverHeight end, function(v) state.hoverHeight=v end," studs")
+slider(pages.farm,"Strike Height (attack)",3,15,1,
+    function() return state.strikeHeight end, function(v) state.strikeHeight=v end," studs")
+toggle(pages.farm,"Combat Drop","Dive to strike height when attacking",
+    function() return state.combatDrop end, function(v) state.combatDrop=v end)
 slider(pages.farm,"Hitbox Size",10,150,1,
     function() return state.hitboxSize end, function(v) state.hitboxSize=v end," studs")
-toggle(pages.farm,"Fat Hitbox","Enlarge NPC HRP",
+toggle(pages.farm,"Fat Hitbox","Enlarge NPC parts",
     function() return state.fatHitbox end, function(v) state.fatHitbox=v end)
 toggle(pages.farm,"Lock Camera","Force cam on target",
     function() return state.lockCamera end, function(v) state.lockCamera=v end)
@@ -874,14 +866,14 @@ toggle(pages.farm,"Kill Aura","Attack nearby",
 slider(pages.farm,"Kill Aura Range",10,300,5,
     function() return state.killAuraRange end, function(v) state.killAuraRange=v end," studs")
 
-section(pages.farm,"FLY")
-toggle(pages.farm,"Fly (WASD + Space/Ctrl)","Toggle flight",
+section(pages.farm,"FLY (WASD + Space / Ctrl)")
+toggle(pages.farm,"Fly","Toggle flight",
     function() return state.fly end, function(v) state.fly=v end)
-slider(pages.farm,"Fly Speed",10,300,5,
+slider(pages.farm,"Fly Speed",10,400,5,
     function() return state.flySpeed end, function(v) state.flySpeed=v end,"")
 
 section(pages.farm,"AUTO FISH")
-toggle(pages.farm,"Auto Fish","Auto cast + reel rod",
+toggle(pages.farm,"Auto Fish","Auto cast + reel",
     function() return state.autoFish end, function(v) state.autoFish=v end)
 
 section(pages.farm,"AUTO COLLECT")
@@ -922,7 +914,7 @@ task.spawn(function()
             end
             hL.Text="Hover: "..(hoverActive and (hoverTarget and hoverTarget.Name or "yes") or "no")
             local act=state.autoFarmLevel or state.autoFarmPirates
-                     or state.autoFarmMarines or state.autoFarmBosses or state.killAura or state.autoFish
+                     or state.autoFarmMarines or state.autoFarmBosses or state.killAura or state.autoFish or state.fly
             sd.BackgroundColor3=act and C.green or C.red
         end)
     end
@@ -1014,78 +1006,34 @@ local fGridLay = Instance.new("UIGridLayout", fScroll)
 fGridLay.CellSize = UDim2.new(0, 90, 0, 32)
 fGridLay.CellPadding = UDim2.new(0, 6, 0, 6)
 fGridLay.SortOrder = Enum.SortOrder.LayoutOrder
-
 local fBtns = {}
 local function selFruit(name)
     state.selectedFruit = name
     fSelLabel.Text = "  Selected: " .. name
     for n,b in pairs(fBtns) do
         local a = (n == name)
-        tw(b, 0.15, {
-            BackgroundColor3 = a and C.accent2 or C.surface2,
-            TextColor3 = a and Color3.fromRGB(255,255,255) or C.text,
-        })
+        tw(b, 0.15, {BackgroundColor3 = a and C.accent2 or C.surface2, TextColor3 = a and Color3.fromRGB(255,255,255) or C.text})
     end
 end
 for _, fname in ipairs(FRUITS) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 90, 0, 32)
-    b.BackgroundColor3 = C.surface2
-    b.Text = fname
-    b.TextColor3 = C.text
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
-    b.AutoButtonColor = false
-    b.Parent = fScroll
-    crn(b, 6)
-    b.MouseEnter:Connect(function()
-        if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface3}) end
-    end)
-    b.MouseLeave:Connect(function()
-        if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface2}) end
-    end)
+    b.Size = UDim2.new(0, 90, 0, 32); b.BackgroundColor3 = C.surface2
+    b.Text = fname; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold
+    b.TextSize = 12; b.AutoButtonColor = false; b.Parent = fScroll; crn(b, 6)
+    b.MouseEnter:Connect(function() if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface3}) end end)
+    b.MouseLeave:Connect(function() if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface2}) end end)
     b.MouseButton1Click:Connect(function() selFruit(fname) end)
     fBtns[fname] = b
 end
 selFruit(state.selectedFruit)
-
 action(pages.tp,"🍎  TP to Selected Fruit",function()
     local obj = findFruit(state.selectedFruit)
-    if obj then
-        tpToObject(obj)
-        notify("Fruit", "TP to: "..state.selectedFruit, C.accent2)
-    else
-        notify("Fruit", state.selectedFruit.." не найдено рядом", C.red)
-    end
+    if obj then tpToObject(obj); notify("Fruit", "TP: "..state.selectedFruit, C.accent2)
+    else notify("Fruit", state.selectedFruit.." не найдено", C.red) end
 end, C.accent2)
-action(pages.tp,"🔄  Scan All Fruits",function()
-    local found = {}
-    local ok, descs = pcall(function() return workspace:GetDescendants() end)
-    if ok then
-        local r = getRoot(); if not r then return end
-        for _, o in ipairs(descs) do
-            for _, fname in ipairs(FRUITS) do
-                if o.Name:lower():find(fname:lower(), 1, true) then
-                    local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o.PrimaryPart) or o
-                    if pp and pp.Position then
-                        local d = (pp.Position - r.Position).Magnitude
-                        if d < 5000 then
-                            found[fname] = found[fname] or {}
-                            table.insert(found[fname], math.floor(d))
-                        end
-                    end
-                    break
-                end
-            end
-        end
-    end
-    local count = 0
-    for _ in pairs(found) do count = count + 1 end
-    notify("Fruit Scan", "Найдено типов: "..count, C.green)
-end, C.surface2)
 
 section(pages.tp,"WAYPOINTS")
-input(pages.tp,"New waypoint name...",function(name)
+input(pages.tp,"New waypoint...",function(name)
     if name and name~="" then saveWP(name); notify("WP","Saved: "..name,C.green); rebuildWP() end
 end,"SAVE")
 local wc=Instance.new("Frame")
@@ -1147,7 +1095,7 @@ crn(ic,10); strk(ic,C.surface3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v13\nfly + high safe hover\n\nmade by Bin & Steve\nnya~"
+it.Text="Bin's Blox Fruits Hub v14\nfixed fly + combat drop\n\nmade by Bin & Steve\nnya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
@@ -1190,9 +1138,7 @@ do
         end
     end
     local function en(i)
-        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-            drag=false
-        end
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end
     end
     local function mv(i)
         if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
@@ -1204,5 +1150,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v13","Loaded · fly + safe hover",C.accent)
-print("[Bin's Hub v13] loaded.")
+notify("Bin's Hub v14","Loaded · combat drop + working fly",C.accent)
+print("[Bin's Hub v14] loaded.")

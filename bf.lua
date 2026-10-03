@@ -1,4 +1,4 @@
--- Bin's Blox Fruits Hub v18 BETA — AUTO STAT + MASTERY + CHEST
+-- Bin's Blox Fruits Hub v19 BETA — QUESTS + FIXED CHEST/FRUIT
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
@@ -61,37 +61,41 @@ local function tpToObject(obj)
     tpTo(pp.Position)
 end
 
+-- ============================================================
+-- REMOTES
+-- ============================================================
+local function getCommF()
+    local r = ReplicatedStorage:FindFirstChild("Remotes")
+    if not r then return nil end
+    return r:FindFirstChild("CommF_")
+end
+
+-- ============================================================
+-- STATE
+-- ============================================================
 local state = {
     autoFarmLevel=false, autoFarmPirates=false, autoFarmMarines=false, autoFarmBosses=false,
-    attackSpeed=0.3, killAura=false, killAuraRange=45,
+    attackSpeed=0.25, killAura=false, killAuraRange=45,
     hoverHeight=6,
     selectedTP="Pirate Island", espNPCs=false, espPlayers=false,
     autoChest=false, autoFruit=false, lockCamera=true,
     autoFish=false, selectedFruit="Dragon",
     fly=false, flySpeed=120,
-    -- NEW:
     autoStat=false, selectedStat="Melee",
     autoFruitMastery=false, masteryFruit="Dragon",
-    chestRange=800,
+    chestRange=1500,
+    autoQuest=false, selectedQuest="Bandit", questLevel=1,
 }
 
 -- ============================================================
--- AUTO STAT (прокачка уровня)
+-- AUTO STAT
 -- ============================================================
 local STAT_NAMES = {"Melee", "Defense", "Sword", "Gun", "Blox Fruit"}
 
-local function getRemotes()
-    local r = ReplicatedStorage:FindFirstChild("Remotes")
-    if not r then return nil end
-    return r:FindFirstChild("CommF_") or r:FindFirstChild("CommE_") or r:FindFirstChild("Comm")
-end
-
 local function allocateStat(statName)
-    local remotes = getRemotes()
+    local remotes = getCommF()
     if not remotes then return false end
-    local ok = pcall(function()
-        remotes:InvokeServer("AddPoint", statName, 1)
-    end)
+    local ok = pcall(function() remotes:InvokeServer("AddPoint", statName, 1) end)
     return ok
 end
 
@@ -106,7 +110,7 @@ local function applyHitbox(npc)
     local hrp = npc:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     if not origHRP[hrp] then
-        origHRP[hrp] = { size = hrp.Size, trans = hrp.Transparency, coll = hrp.CanCollide, mass = hrp.Massless }
+        origHRP[hrp] = { size=hrp.Size, trans=hrp.Transparency, coll=hrp.CanCollide, mass=hrp.Massless }
     end
     pcall(function()
         hrp.Size = Vector3.new(HITBOX_SIZE, HITBOX_SIZE, HITBOX_SIZE)
@@ -125,10 +129,8 @@ local function restoreHitbox(npc)
     local o = origHRP[hrp]
     if o then
         pcall(function()
-            hrp.Size = o.size
-            hrp.Transparency = o.trans
-            hrp.CanCollide = o.coll
-            hrp.Massless = o.mass
+            hrp.Size = o.size; hrp.Transparency = o.trans
+            hrp.CanCollide = o.coll; hrp.Massless = o.mass
         end)
         origHRP[hrp] = nil
     end
@@ -189,13 +191,9 @@ local function startFly()
         if UserInput:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
         if UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
         if move.Magnitude > 0 then move = move.Unit * state.flySpeed * dt end
-        pcall(function()
-            rr.CFrame = rr.CFrame + move
-            rr.Velocity = Vector3.new(0,0,0)
-        end)
+        pcall(function() rr.CFrame = rr.CFrame + move; rr.Velocity = Vector3.new(0,0,0) end)
     end)
 end
-
 local function stopFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
     if humanoid then
@@ -206,7 +204,6 @@ local function stopFly()
         end)
     end
 end
-
 task.spawn(function()
     local last = false
     while task.wait(0.1) do
@@ -216,39 +213,16 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- AUTO STAT LOOP
--- ============================================================
+-- AUTO STAT loop
 task.spawn(function()
     while task.wait(0.5) do
-        if state.autoStat then
-            pcall(function()
-                allocateStat(state.selectedStat)
-            end)
-        end
+        if state.autoStat then pcall(function() allocateStat(state.selectedStat) end) end
     end
 end)
 
 -- ============================================================
--- AUTO FRUIT MASTERY — просто фармит + использует фрукт
+-- TP LOCATIONS
 -- ============================================================
-task.spawn(function()
-    while task.wait(0.5) do
-        if state.autoFruitMastery then
-            -- используем скиллы фрукта (Z X C V) автоматически
-            if VirtualInput then
-                for _,k in ipairs({"Z","X","C","V"}) do
-                    pcall(function()
-                        VirtualInput:SendKeyEvent(true, Enum.KeyCode[k], false, game)
-                        task.wait(0.03)
-                        VirtualInput:SendKeyEvent(false, Enum.KeyCode[k], false, game)
-                    end)
-                end
-            end
-        end
-    end
-end)
-
 local TP_LOCATIONS = {
     { name="Bandit Camp", icon="🏕️", pos=Vector3.new(-1110,20,3200), sea=1 },
     { name="Pirate Village", icon="🏘️", pos=Vector3.new(-1200,20,3400), sea=1 },
@@ -280,6 +254,46 @@ local TP_LOCATIONS = {
 }
 local function findLoc(n) for _,l in ipairs(TP_LOCATIONS) do if l.name==n then return l end end end
 
+-- ============================================================
+-- QUESTS (Quest Givers)
+-- ============================================================
+local QUESTS = {
+    -- Sea 1
+    { name="Bandit",           level=1,   pos=Vector3.new(-1143,20,3140),   npc="Bandit" },
+    { name="Monkey",           level=15,  pos=Vector3.new(-1594,20,200),    npc="Monkey" },
+    { name="Blade Master",     level=25,  pos=Vector3.new(-1449,20,127),    npc="Blade Master" },
+    { name="Brute",            level=40,  pos=Vector3.new(-1140,20,1520),   npc="Brute" },
+    { name="Pirate",           level=60,  pos=Vector3.new(-1200,20,3400),   npc="Pirate" },
+    { name="Marine",           level=90,  pos=Vector3.new(-2800,20,4300),   npc="Marine" },
+    { name="Snow Bandit",      level=120, pos=Vector3.new(1250,20,-1500),   npc="Snow Bandit" },
+    { name="Snowman",          level=140, pos=Vector3.new(1300,20,-1600),   npc="Snowman" },
+    { name="Frost Brigand",    level=160, pos=Vector3.new(1400,20,-1400),   npc="Frost Brigand" },
+    { name="Sky Bandit",       level=180, pos=Vector3.new(-500,800,-1500),  npc="Sky Bandit" },
+    -- Sea 2
+    { name="Raider",           level=375, pos=Vector3.new(-400,20,6000),    npc="Raider" },
+    { name="Mercenary",        level=450, pos=Vector3.new(-3600,20,-4500),  npc="Mercenary" },
+    { name="Zombie",           level=550, pos=Vector3.new(-5500,20,-3000),  npc="Zombie" },
+    -- Sea 3
+    { name="Pirate Captain",   level=1000,pos=Vector3.new(-500,20,-10000),  npc="Pirate Captain" },
+    { name="Hydra",            level=1100,pos=Vector3.new(5000,20,-9000),   npc="Hydra" },
+}
+
+local function startQuest(questName, level)
+    local remotes = getCommF()
+    if not remotes then return false end
+    local ok = pcall(function()
+        remotes:InvokeServer("StartQuest", questName, level)
+    end)
+    return ok
+end
+
+local function findQuest(name)
+    for _, q in ipairs(QUESTS) do if q.name == name then return q end end
+end
+
+-- ============================================================
+-- FRUITS
+-- ============================================================
 local FRUITS = {
     "Dragon","Leopard","Kitsune","Dough","Venom","Shadow","Control",
     "Spirit","Mammoth","T-Rex","Gas","Portal","Buddha","Phoenix",
@@ -312,22 +326,12 @@ local function findFruit(name)
     return best
 end
 
-local WAYPOINTS, wpOrder = {}, {}
-local function saveWP(n)
-    local r = getRoot(); if not r or not n or n=="" then return end
-    if not WAYPOINTS[n] then table.insert(wpOrder, n) end
-    WAYPOINTS[n] = r.Position
-end
-local function delWP(n)
-    if WAYPOINTS[n] then
-        WAYPOINTS[n]=nil
-        for i,x in ipairs(wpOrder) do if x==n then table.remove(wpOrder,i); break end end
-    end
-end
-
+-- ============================================================
+-- NPC CACHE
+-- ============================================================
 local npcCache = {}
 local KW = {
-    pirate={"Pirate","Bandit","Brute","Thief","Criminal","Rogue","Buccaneer","Smoker","Clown"},
+    pirate={"Pirate","Bandit","Brute","Thief","Criminal","Rogue","Buccaneer","Smoker","Clown","Raider","Mercenary","Zombie"},
     marine={"Marine","Soldier","Officer","Captain","Vice","Commander","Guard","Sword"},
     boss={"Boss","Lord","King","Queen","Admiral","Warden","Diamond","Cyborg"},
 }
@@ -372,6 +376,9 @@ local function nearest(tag)
     return best
 end
 
+-- ============================================================
+-- ATTACK — ФИКС: фрукты активируются через мышь в центр
+-- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
@@ -381,44 +388,47 @@ local function attack(npc)
     local r = getRoot()
     if r then pcall(function() r.CFrame = CFrame.lookAt(r.Position, hrp.Position) end) end
 
+    -- экип оружия
     local tool
     if character then
         tool = character:FindFirstChildOfClass("Tool")
-        if not tool then
-            for _,t in ipairs(character:GetChildren()) do
-                if t:IsA("Tool") then tool=t; break end
-            end
-        end
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
 
+    -- камера в куб (куб в центре)
     if camera then
         pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, hrp.Position) end)
     end
 
-    if tool then pcall(function() tool:Activate() end) end
-
+    -- КЛИК ПО ЦЕНТРУ — для фруктов это важно
     if VirtualInput and camera then
         local vp = camera.ViewportSize
         local cx, cy = vp.X/2, vp.Y/2
         pcall(function()
             VirtualInput:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-            task.wait(0.03)
+            task.wait(0.02)
             VirtualInput:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
         end)
     end
 
-    if tool then pcall(function() tool:Activate() end) end
+    -- прямая активация оружия/фрукта
+    if tool then
+        pcall(function() tool:Activate() end)
+    end
 
+    -- СКИЛЛЫ: Z X C V — для фрукта это ОСНОВНОЙ урон
     if VirtualInput then
         for _,k in ipairs({"Z","X","C","V"}) do
             pcall(function()
                 VirtualInput:SendKeyEvent(true, Enum.KeyCode[k], false, game)
-                task.wait(0.02)
+                task.wait(0.03)
                 VirtualInput:SendKeyEvent(false, Enum.KeyCode[k], false, game)
             end)
         end
     end
+
+    -- повторная активация
+    if tool then pcall(function() tool:Activate() end) end
 end
 
 local PRIO = {
@@ -431,7 +441,7 @@ task.spawn(function()
     while true do
         local act=false
         for _,p in ipairs(PRIO) do
-            if p.get() or state.autoFruitMastery then
+            if p.get() or state.autoQuest or state.autoFruitMastery then
                 act=true
                 local n = p.get() and nearest(p.tag) or nearest("all")
                 if n then setHover(n); pcall(attack, n) end
@@ -460,16 +470,63 @@ task.spawn(function()
 end)
 
 -- ============================================================
+-- AUTO QUEST
+-- ============================================================
+task.spawn(function()
+    while task.wait(1) do
+        if state.autoQuest then
+            local q = findQuest(state.selectedQuest)
+            if q then
+                -- ТП к квестодателю
+                local r = getRoot()
+                if r then
+                    local distToQ = (r.Position - q.pos).Magnitude
+                    if distToQ > 30 then
+                        tpTo(q.pos)
+                        task.wait(0.5)
+                    end
+                    -- берём квест
+                    pcall(function() startQuest(q.npc, q.level) end)
+                    task.wait(0.5)
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- AUTO FRUIT MASTERY
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.autoFruitMastery then
+            if VirtualInput then
+                for _,k in ipairs({"Z","X","C","V"}) do
+                    pcall(function()
+                        VirtualInput:SendKeyEvent(true, Enum.KeyCode[k], false, game)
+                        task.wait(0.03)
+                        VirtualInput:SendKeyEvent(false, Enum.KeyCode[k], false, game)
+                    end)
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
 -- AUTO CHEST — улучшенное сканирование
 -- ============================================================
 local chestCache = {}
-local chestMT = setmetatable({}, {__mode="k"})
 
 local function classifyChest(o)
     pcall(function()
-        if not (o:IsA("Model") or o:IsA("BasePart")) then return end
+        local isModel = o:IsA("Model")
+        local isPart = o:IsA("BasePart")
+        if not (isModel or isPart) then return end
         local n = o.Name:lower()
-        if n:find("chest") or n:find("crate") or n:find("box") then
+        -- Blox Fruits: chests называются "Chest", "TreasureChest", "RustyChest" и т.д.
+        if n == "chest" or n:find("chest") or n:find("crate")
+           or n:find("barrel") or n:find("treasure") then
             chestCache[o] = true
         end
     end)
@@ -480,9 +537,8 @@ pcall(function()
 end)
 workspace.DescendantAdded:Connect(classifyChest)
 
--- чистим мёртвые
 task.spawn(function()
-    while task.wait(2) do
+    while task.wait(3) do
         for o in pairs(chestCache) do
             if not o.Parent then chestCache[o] = nil end
         end
@@ -490,14 +546,14 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while task.wait(0.5) do
+    while task.wait(0.4) do
         if state.autoChest then
             local r = getRoot()
             if r then
                 local myPos = r.Position
                 local best, bd = nil, state.chestRange
                 for o in pairs(chestCache) do
-                    local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart) or o
+                    local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart or o:FindFirstChildWhichIsA("BasePart")) or o
                     if pp and pp.Position then
                         local d = (pp.Position - myPos).Magnitude
                         if d < bd then bd = d; best = pp end
@@ -505,7 +561,7 @@ task.spawn(function()
                 end
                 if best then
                     tpTo(best.Position)
-                    task.wait(0.1)
+                    task.wait(0.15)
                 end
             end
         end
@@ -516,6 +572,7 @@ task.spawn(function()
     end
 end)
 
+-- AUTO FISH
 local function findRod()
     if not character then return nil end
     local ok, ch = pcall(function() return character:GetChildren() end)
@@ -527,7 +584,6 @@ local function findRod()
     end
     return nil
 end
-
 task.spawn(function()
     local fishing = false
     while task.wait(0.3) do
@@ -543,9 +599,7 @@ task.spawn(function()
                         task.wait(math.random(30, 80) / 10)
                         pcall(function() rod:Activate() end)
                         task.wait(1.5)
-                    else
-                        task.wait(1)
-                    end
+                    else task.wait(1) end
                 end
                 fishing = false
             end)
@@ -553,6 +607,7 @@ task.spawn(function()
     end
 end)
 
+-- ESP
 local espFolder = Instance.new("Folder"); espFolder.Name="BinESP"; espFolder.Parent=workspace
 local function mkESP(ad,col,txt)
     local bb=Instance.new("BillboardGui")
@@ -585,9 +640,7 @@ task.spawn(function()
                     if en and en.bb.Parent then
                         if en.ad~=h then en.bb.Adornee=h; en.box.Adornee=h; en.ad=h end
                         en.lbl.Text=e.model.Name; en.lbl.TextColor3=col; en.box.Color3=col
-                    else
-                        nESP[e.model]=mkESP(h,col,e.model.Name)
-                    end
+                    else nESP[e.model]=mkESP(h,col,e.model.Name) end
                 end
             end
             for m,en in pairs(nESP) do if not seen[m] then killESP(en); nESP[m]=nil end end
@@ -604,9 +657,7 @@ task.spawn(function()
                         local en=pESP[pl]
                         if en and en.bb.Parent then
                             if en.ad~=h then en.bb.Adornee=h; en.box.Adornee=h; en.ad=h end
-                        else
-                            pESP[pl]=mkESP(h,Color3.fromRGB(85,225,145),pl.Name)
-                        end
+                        else pESP[pl]=mkESP(h,Color3.fromRGB(85,225,145),pl.Name) end
                     end
                 end
             end
@@ -617,6 +668,7 @@ task.spawn(function()
     end
 end)
 
+-- UI
 local C = {
     bg=Color3.fromRGB(12,12,20), bg2=Color3.fromRGB(20,20,32),
     surface=Color3.fromRGB(28,28,44), surface2=Color3.fromRGB(40,40,60),
@@ -627,7 +679,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV18"; sg.ResetOnSpawn=false
+sg.Name="BinBloxFruitsV19"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -711,7 +763,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v18 beta · auto stat + mastery"
+sl.BackgroundTransparency=1; sl.Text="v19 beta · quests + chest fix"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -730,8 +782,8 @@ pill.Size=UDim2.new(0.25,-6,1,-8); pill.Position=UDim2.new(0,4,0,4)
 pill.BackgroundColor3=C.accent; pill.BorderSizePixel=0; pill.ZIndex=1; pill.Parent=tabBar
 crn(pill,9)
 local pages,tabs={},{}
-local TN={"farm","stats","tp","visual","misc"}
-local TL={"⚔  FARM","📊  STATS","🌀  TP","👁  VISUAL","⚙  MISC"}
+local TN={"farm","quests","stats","tp","visual","misc"}
+local TL={"⚔ FARM","📜 QUEST","📊 STAT","🌀 TP","👁 ESP","⚙ MISC"}
 local function selTab(name)
     for _,n in ipairs(TN) do if tabs[n] then tabs[n].TextColor3=(n==name) and C.bg or C.sub end end
     local idx=1
@@ -872,32 +924,8 @@ local function action(parent,text,cb2,col)
         if not ok then warn("[BF Hub] "..tostring(err)); notify("Error",tostring(err),C.red) end
     end)
 end
-local function input(parent,ph,cb2,bt)
-    bt=bt or "OK"
-    local c=Instance.new("Frame")
-    c.Size=UDim2.new(1,0,0,44); c.BackgroundColor3=C.surface
-    c.BorderSizePixel=0; c.LayoutOrder=no(); c.Parent=parent
-    crn(c,10); strk(c,C.surface3,1,0.5)
-    local bx=Instance.new("TextBox")
-    bx.Size=UDim2.new(0.65,-12,1,-10); bx.Position=UDim2.new(0,12,0,5)
-    bx.BackgroundColor3=C.surface2; bx.Text=""; bx.PlaceholderText=ph
-    bx.PlaceholderColor3=C.dim; bx.TextColor3=C.text
-    bx.Font=Enum.Font.Gotham; bx.TextSize=12; bx.ClearTextOnFocus=false; bx.Parent=c
-    crn(bx,6)
-    local btn=Instance.new("TextButton")
-    btn.Size=UDim2.new(0.35,-12,1,-10); btn.Position=UDim2.new(0.65,6,0,5)
-    btn.BackgroundColor3=C.accent; btn.Text=bt; btn.TextColor3=C.bg
-    btn.Font=Enum.Font.GothamBold; btn.TextSize=13
-    btn.AutoButtonColor=false; btn.Parent=c; crn(btn,6)
-    btn.MouseButton1Click:Connect(function()
-        local ok,err=pcall(function() cb2(bx.Text) end)
-        if not ok then notify("Error",tostring(err),C.red) end
-    end)
-end
 
--- ============================================================
 -- FARM PAGE
--- ============================================================
 section(pages.farm,"FARMING")
 toggle(pages.farm,"Auto Farm Level","Any NPC",
     function() return state.autoFarmLevel end, function(v) state.autoFarmLevel=v end)
@@ -908,7 +936,7 @@ toggle(pages.farm,"Auto Farm Marines","Prioritize marines",
 toggle(pages.farm,"Auto Farm Bosses","Prioritize bosses",
     function() return state.autoFarmBosses end, function(v) state.autoFarmBosses=v end)
 
-section(pages.farm,"COMBAT / HOVER")
+section(pages.farm,"COMBAT")
 slider(pages.farm,"Attack Speed",0.1,2.0,0.05,
     function() return state.attackSpeed end, function(v) state.attackSpeed=v end,"s")
 slider(pages.farm,"Hover Height",3,15,1,
@@ -920,67 +948,92 @@ toggle(pages.farm,"Kill Aura","Attack nearby",
 slider(pages.farm,"Kill Aura Range",10,300,5,
     function() return state.killAuraRange end, function(v) state.killAuraRange=v end," studs")
 
-section(pages.farm,"FLY (WASD + Space / Ctrl)")
-toggle(pages.farm,"Fly","Toggle flight",
+section(pages.farm,"FLY")
+toggle(pages.farm,"Fly","WASD + Space/Ctrl",
     function() return state.fly end, function(v) state.fly=v end)
 slider(pages.farm,"Fly Speed",10,400,5,
     function() return state.flySpeed end, function(v) state.flySpeed=v end,"")
 
 section(pages.farm,"AUTO FISH")
-toggle(pages.farm,"Auto Fish","Auto cast + reel",
+toggle(pages.farm,"Auto Fish","Auto cast",
     function() return state.autoFish end, function(v) state.autoFish=v end)
 
 section(pages.farm,"AUTO COLLECT")
-toggle(pages.farm,"Auto Chest","Auto TP to chests (kucha)",
+toggle(pages.farm,"Auto Chest","TP to chests (smart scan)",
     function() return state.autoChest end, function(v) state.autoChest=v end)
 slider(pages.farm,"Chest Range",100,3000,50,
     function() return state.chestRange end, function(v) state.chestRange=v end," studs")
 toggle(pages.farm,"Auto Fruit (selected)","TP to selected fruit",
     function() return state.autoFruit end, function(v) state.autoFruit=v end)
 
-section(pages.farm,"STATUS")
-local sc=Instance.new("Frame")
-sc.Size=UDim2.new(1,0,0,130); sc.BackgroundColor3=C.surface
-sc.BorderSizePixel=0; sc.LayoutOrder=no(); sc.Parent=pages.farm
-crn(sc,10); strk(sc,C.surface3,1,0.5)
-local ncL=Instance.new("TextLabel")
-ncL.Size=UDim2.new(1,-40,0,20); ncL.Position=UDim2.new(0,16,0,10)
-ncL.BackgroundTransparency=1; ncL.Text="NPCs: 0"; ncL.TextColor3=C.text
-ncL.Font=Enum.Font.Gotham; ncL.TextSize=12
-ncL.TextXAlignment=Enum.TextXAlignment.Left; ncL.Parent=sc
-local hpL=Instance.new("TextLabel")
-hpL.Size=UDim2.new(1,-40,0,20); hpL.Position=UDim2.new(0,16,0,30)
-hpL.BackgroundTransparency=1; hpL.Text="HP: -"; hpL.TextColor3=C.sub
-hpL.Font=Enum.Font.Gotham; hpL.TextSize=12
-hpL.TextXAlignment=Enum.TextXAlignment.Left; hpL.Parent=sc
-local hL=Instance.new("TextLabel")
-hL.Size=UDim2.new(1,-40,0,20); hL.Position=UDim2.new(0,16,0,60)
-hL.BackgroundTransparency=1; hL.Text="Hover: -"; hL.TextColor3=C.sub
-hL.Font=Enum.Font.Gotham; hL.TextSize=12
-hL.TextXAlignment=Enum.TextXAlignment.Left; hL.Parent=sc
-local sd=Instance.new("Frame")
-sd.Size=UDim2.new(0,8,0,8); sd.Position=UDim2.new(1,-22,0,16)
-sd.BackgroundColor3=C.red; sd.BorderSizePixel=0; sd.Parent=sc; crn(sd,4)
-task.spawn(function()
-    while task.wait(0.5) do
-        pcall(function()
-            ncL.Text="NPCs: "..tostring(#npcCache).." | Hitbox 30 | Chests: "..tostring((function() local n=0 for _ in pairs(chestCache) do n=n+1 end return n end)())
-            if humanoid and humanoid.Parent then
-                hpL.Text=string.format("HP: %d / %d",math.floor(humanoid.Health),math.floor(humanoid.MaxHealth))
-            end
-            hL.Text="Hover: "..(hoverActive and (hoverTarget and hoverTarget.Name or "yes") or "no")
-            local act=state.autoFarmLevel or state.autoFarmPirates
-                     or state.autoFarmMarines or state.autoFarmBosses or state.killAura or state.autoFish or state.fly
-                     or state.autoStat or state.autoFruitMastery or state.autoChest
-            sd.BackgroundColor3=act and C.green or C.red
-        end)
-    end
-end)
+-- QUESTS PAGE
+section(pages.quests,"AUTO QUEST")
+toggle(pages.quests,"Auto Quest","Take + complete quest loop",
+    function() return state.autoQuest end, function(v) state.autoQuest=v end)
 
--- ============================================================
+local qLabel = Instance.new("TextLabel")
+qLabel.Size = UDim2.new(1,0,0,26); qLabel.BackgroundColor3 = C.surface
+qLabel.BorderSizePixel = 0; qLabel.LayoutOrder = no(); qLabel.Parent = pages.quests
+qLabel.Text = "  Selected: Bandit (Lvl 1)"
+qLabel.TextColor3 = C.accent3; qLabel.Font = Enum.Font.GothamBold
+qLabel.TextSize = 13; qLabel.TextXAlignment = Enum.TextXAlignment.Left
+crn(qLabel, 8); strk(qLabel, C.accent3, 1, 0.4)
+
+local qGrid = Instance.new("Frame")
+qGrid.Size = UDim2.new(1,0,0,260); qGrid.BackgroundColor3 = C.surface
+qGrid.BorderSizePixel = 0; qGrid.LayoutOrder = no(); qGrid.Parent = pages.quests
+crn(qGrid,10); strk(qGrid, C.surface3, 1, 0.5)
+local qScroll = Instance.new("ScrollingFrame")
+qScroll.Size = UDim2.new(1,-16,1,-16); qScroll.Position = UDim2.new(0,8,0,8)
+qScroll.BackgroundTransparency = 1; qScroll.BorderSizePixel = 0
+qScroll.ScrollBarThickness = 4; qScroll.ScrollBarImageColor3 = C.accent3
+qScroll.CanvasSize = UDim2.new(0,0,0,0); qScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+qScroll.Parent = qGrid
+local qLay = Instance.new("UIListLayout", qScroll)
+qLay.Padding = UDim.new(0, 5); qLay.SortOrder = Enum.SortOrder.LayoutOrder
+
+local qBtns = {}
+local function selQuest(name)
+    state.selectedQuest = name
+    local q = findQuest(name)
+    if q then
+        qLabel.Text = "  Selected: " .. q.name .. " (Lvl " .. q.level .. ")"
+        state.questLevel = q.level
+    end
+    for n,b in pairs(qBtns) do
+        local a = (n == name)
+        tw(b, 0.15, {
+            BackgroundColor3 = a and C.accent3 or C.surface2,
+            TextColor3 = a and Color3.fromRGB(255,255,255) or C.text,
+        })
+    end
+end
+
+for _, q in ipairs(QUESTS) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1,-6,0,32)
+    b.BackgroundColor3 = C.surface2
+    b.Text = "  " .. q.name .. "  ·  Lvl " .. q.level
+    b.TextColor3 = C.text; b.Font = Enum.Font.Gotham
+    b.TextSize = 12; b.TextXAlignment = Enum.TextXAlignment.Left
+    b.AutoButtonColor = false; b.Parent = qScroll; crn(b, 6)
+    b.MouseButton1Click:Connect(function() selQuest(q.name) end)
+    qBtns[q.name] = b
+end
+selQuest(state.selectedQuest)
+
+action(pages.quests,"📜  Start Selected Quest (manual)", function()
+    local q = findQuest(state.selectedQuest)
+    if q then
+        tpTo(q.pos)
+        task.wait(0.5)
+        startQuest(q.npc, q.level)
+        notify("Quest", "Started: "..q.name, C.accent3)
+    end
+end, C.accent3)
+
 -- STATS PAGE
--- ============================================================
-section(pages.stats,"AUTO STAT (авто-прокачка уровня)")
+section(pages.stats,"AUTO STAT")
 toggle(pages.stats,"Auto Stat","Auto allocate points",
     function() return state.autoStat end, function(v) state.autoStat=v end)
 
@@ -1009,17 +1062,12 @@ local function selStat(name)
     sLabel.Text = "  Selected: " .. name
     for n,b in pairs(statBtns) do
         local a = (n == name)
-        tw(b, 0.15, {
-            BackgroundColor3 = a and C.accent or C.surface2,
-            TextColor3 = a and C.bg or C.text,
-        })
+        tw(b, 0.15, {BackgroundColor3 = a and C.accent or C.surface2, TextColor3 = a and C.bg or C.text})
     end
 end
-
 for _, sname in ipairs(STAT_NAMES) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 80, 0, 34)
-    b.BackgroundColor3 = C.surface2
+    b.Size = UDim2.new(0, 80, 0, 34); b.BackgroundColor3 = C.surface2
     b.Text = sname; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold
     b.TextSize = 11; b.AutoButtonColor = false; b.Parent = sGrid; crn(b, 6)
     b.MouseButton1Click:Connect(function() selStat(sname) end)
@@ -1027,132 +1075,11 @@ for _, sname in ipairs(STAT_NAMES) do
 end
 selStat(state.selectedStat)
 
-section(pages.stats,"MANUAL")
-action(pages.stats,"📊  Add 1 point manually", function()
-    local ok = allocateStat(state.selectedStat)
-    if ok then notify("Stat", "+1 to "..state.selectedStat, C.green)
-    else notify("Stat", "Remote не найден", C.red) end
-end, C.accent3)
-
--- ============================================================
--- FRUIT MASTERY SECTION
--- ============================================================
 section(pages.stats,"AUTO FRUIT MASTERY")
-toggle(pages.stats,"Auto Fruit Mastery","Farming + spam skills for mastery",
+toggle(pages.stats,"Auto Fruit Mastery","Farming + spam skills",
     function() return state.autoFruitMastery end, function(v) state.autoFruitMastery=v end)
 
-local mLabel = Instance.new("TextLabel")
-mLabel.Size = UDim2.new(1,0,0,26); mLabel.BackgroundColor3 = C.surface
-mLabel.BorderSizePixel = 0; mLabel.LayoutOrder = no(); mLabel.Parent = pages.stats
-mLabel.Text = "  Mastery Fruit: Dragon"
-mLabel.TextColor3 = C.accent2; mLabel.Font = Enum.Font.GothamBold
-mLabel.TextSize = 13; mLabel.TextXAlignment = Enum.TextXAlignment.Left
-crn(mLabel, 8); strk(mLabel, C.accent2, 1, 0.4)
-
-local mGrid = Instance.new("Frame")
-mGrid.Size = UDim2.new(1,0,0,180); mGrid.BackgroundColor3 = C.surface
-mGrid.BorderSizePixel = 0; mGrid.LayoutOrder = no(); mGrid.Parent = pages.stats
-crn(mGrid,10); strk(mGrid, C.surface3, 1, 0.5)
-local mScroll = Instance.new("ScrollingFrame")
-mScroll.Size = UDim2.new(1,-16,1,-16); mScroll.Position = UDim2.new(0,8,0,8)
-mScroll.BackgroundTransparency = 1; mScroll.BorderSizePixel = 0
-mScroll.ScrollBarThickness = 4; mScroll.ScrollBarImageColor3 = C.accent2
-mScroll.CanvasSize = UDim2.new(0,0,0,0); mScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-mScroll.Parent = mGrid
-local mLay = Instance.new("UIGridLayout", mScroll)
-mLay.CellSize = UDim2.new(0, 90, 0, 32)
-mLay.CellPadding = UDim2.new(0, 6, 0, 6)
-mLay.SortOrder = Enum.SortOrder.LayoutOrder
-
-local mBtns = {}
-local function selMFruit(name)
-    state.masteryFruit = name
-    mLabel.Text = "  Mastery Fruit: " .. name
-    for n,b in pairs(mBtns) do
-        local a = (n == name)
-        tw(b, 0.15, {
-            BackgroundColor3 = a and C.accent2 or C.surface2,
-            TextColor3 = a and Color3.fromRGB(255,255,255) or C.text,
-        })
-    end
-end
-for _, fname in ipairs(FRUITS) do
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 90, 0, 32)
-    b.BackgroundColor3 = C.surface2
-    b.Text = fname; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold
-    b.TextSize = 12; b.AutoButtonColor = false; b.Parent = mScroll; crn(b, 6)
-    b.MouseButton1Click:Connect(function() selMFruit(fname) end)
-    mBtns[fname] = b
-end
-selMFruit(state.masteryFruit)
-
-section(pages.stats,"INFO")
-local mInfo = Instance.new("Frame")
-mInfo.Size = UDim2.new(1,0,0,80); mInfo.BackgroundColor3 = C.surface
-mInfo.BorderSizePixel = 0; mInfo.LayoutOrder = no(); mInfo.Parent = pages.stats
-crn(mInfo,10); strk(mInfo,C.surface3,1,0.5)
-local mInfoT = Instance.new("TextLabel")
-mInfoT.Size = UDim2.new(1,-20,1,-16); mInfoT.Position = UDim2.new(0,16,0,8)
-mInfoT.BackgroundTransparency = 1
-mInfoT.Text = "Fruit Mastery качается когда ты используешь скиллы фрукта (Z X C V).\nВключи Auto Fruit Mastery — он сам спамит скиллы + фармит мобов."
-mInfoT.TextColor3 = C.sub; mInfoT.Font = Enum.Font.Gotham
-mInfoT.TextSize = 11; mInfoT.TextXAlignment = Enum.TextXAlignment.Left
-mInfoT.TextYAlignment = Enum.TextYAlignment.Top
-mInfoT.TextWrapped = true; mInfoT.Parent = mInfo
-
--- ============================================================
--- TP PAGE (сокращён для краткости) 
--- ============================================================
-section(pages.tp,"SEARCH")
-local sf=Instance.new("Frame")
-sf.Size=UDim2.new(1,0,0,38); sf.BackgroundColor3=C.surface
-sf.BorderSizePixel=0; sf.LayoutOrder=no(); sf.Parent=pages.tp
-crn(sf,10); strk(sf,C.surface3,1,0.5)
-local sb=Instance.new("TextBox")
-sb.Size=UDim2.new(1,-32,1,-8); sb.Position=UDim2.new(0,16,0,4)
-sb.BackgroundTransparency=1; sb.Text=""; sb.PlaceholderText="🔍 Search..."
-sb.PlaceholderColor3=C.dim; sb.TextColor3=C.text
-sb.Font=Enum.Font.Gotham; sb.TextSize=12
-sb.TextXAlignment=Enum.TextXAlignment.Left; sb.ClearTextOnFocus=false; sb.Parent=sf
-local lc=Instance.new("Frame")
-lc.Size=UDim2.new(1,0,0,200); lc.BackgroundColor3=C.surface
-lc.BorderSizePixel=0; lc.LayoutOrder=no(); lc.Parent=pages.tp
-crn(lc,10); strk(lc,C.surface3,1,0.5)
-local ll=Instance.new("ScrollingFrame")
-ll.Size=UDim2.new(1,-16,1,-16); ll.Position=UDim2.new(0,8,0,8)
-ll.BackgroundTransparency=1; ll.BorderSizePixel=0
-ll.ScrollBarThickness=4; ll.ScrollBarImageColor3=C.accent3
-ll.CanvasSize=UDim2.new(0,0,0,0); ll.AutomaticCanvasSize=Enum.AutomaticSize.Y; ll.Parent=lc
-local lll=Instance.new("UIListLayout",ll)
-lll.Padding=UDim.new(0,5); lll.SortOrder=Enum.SortOrder.LayoutOrder
-local lb={}
-local function selLoc(name)
-    state.selectedTP=name
-    for n,b in pairs(lb) do
-        local a=(n==name)
-        tw(b,0.15,{BackgroundColor3=a and C.accent3 or C.surface2,TextColor3=a and Color3.fromRGB(255,255,255) or C.text})
-    end
-end
-local function rebuildLoc(f)
-    for _,c in ipairs(ll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-    lb={}; f=(f or ""):lower()
-    for _,l in ipairs(TP_LOCATIONS) do
-        if f=="" or l.name:lower():find(f,1,true) then
-            local b=Instance.new("TextButton")
-            b.Size=UDim2.new(1,-6,0,34); b.BackgroundColor3=C.surface2
-            b.Text="  "..l.icon.."  "..l.name.."   [Sea "..l.sea.."]"
-            b.TextColor3=C.text; b.Font=Enum.Font.Gotham; b.TextSize=12
-            b.TextXAlignment=Enum.TextXAlignment.Left; b.AutoButtonColor=false; b.Parent=ll
-            crn(b,8)
-            b.MouseButton1Click:Connect(function() selLoc(l.name) end)
-            lb[l.name]=b
-        end
-    end
-    selLoc(state.selectedTP)
-end
-rebuildLoc("")
-sb:GetPropertyChangedSignal("Text"):Connect(function() rebuildLoc(sb.Text) end)
+-- TP PAGE
 section(pages.tp,"ACTIONS")
 action(pages.tp,"✨  Teleport Now",function()
     local l=findLoc(state.selectedTP)
@@ -1162,30 +1089,21 @@ action(pages.tp,"🛑  Stop Hover",function()
     if hoverTarget then restoreHitbox(hoverTarget) end
     setHover(nil); notify("Hover","Off",C.red)
 end,C.surface2)
+action(pages.tp,"🍎  TP to Selected Fruit",function()
+    local obj = findFruit(state.selectedFruit)
+    if obj then tpToObject(obj); notify("Fruit", "TP: "..state.selectedFruit, C.accent2)
+    else notify("Fruit", state.selectedFruit.." не найдено", C.red) end
+end, C.accent2)
 
-section(pages.tp,"WAYPOINTS")
-input(pages.tp,"New waypoint...",function(name)
-    if name and name~="" then saveWP(name); notify("WP","Saved: "..name,C.green) end
-end,"SAVE")
-
+-- VISUAL
 section(pages.visual,"ESP")
 toggle(pages.visual,"ESP NPCs","Boxes over enemies",
     function() return state.espNPCs end, function(v) state.espNPCs=v end)
 toggle(pages.visual,"ESP Players","Boxes over players",
     function() return state.espPlayers end, function(v) state.espPlayers=v end)
 
+-- MISC
 section(pages.misc,"INFO")
-local ic=Instance.new("Frame")
-ic.Size=UDim2.new(1,0,0,130); ic.BackgroundColor3=C.surface
-ic.BorderSizePixel=0; ic.LayoutOrder=no(); ic.Parent=pages.misc
-crn(ic,10); strk(ic,C.surface3,1,0.5)
-local it=Instance.new("TextLabel")
-it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
-it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v18 BETA\nauto stat + mastery + chest\n\nmade by Bin & Steve\nnya~"
-it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
-it.TextXAlignment=Enum.TextXAlignment.Left
-it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
 action(pages.misc,"🔄  Refresh NPC Cache",function()
     refresh(); notify("Cache","Refreshed: "..#npcCache,C.green)
 end,C.surface2)
@@ -1237,5 +1155,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v18","Auto stat + mastery",C.accent)
-print("[Bin's Hub v18] loaded.")
+notify("Bin's Hub v19","Quests + chest fix",C.accent)
+print("[Bin's Hub v19] loaded.")

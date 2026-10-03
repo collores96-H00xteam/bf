@@ -1,4 +1,4 @@
--- Bin's Blox Fruits Hub v15 — CLEAN HITBOX
+-- Bin's Blox Fruits Hub v16 BETA — STABLE HOVER
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
@@ -62,35 +62,32 @@ end
 
 local state = {
     autoFarmLevel=false, autoFarmPirates=false, autoFarmMarines=false, autoFarmBosses=false,
-    attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=35,
-    strikeHeight=8,
+    attackSpeed=0.35, killAura=false, killAuraRange=45,
+    hoverHeight=12,  -- СТАБИЛЬНО, не прыгает
     selectedTP="Pirate Island", espNPCs=false, espPlayers=false,
-    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=15, lockCamera=true,
+    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=20, lockCamera=true,
     autoFish=false, selectedFruit="Dragon",
-    fly=false, flySpeed=120, combatDrop=true,
+    fly=false, flySpeed=120,
 }
 
 -- ============================================================
--- ХИТБОКС: только HRP становится кубом, всё остальное не трогаем
+-- HITBOX: только HRP, невидимый, размер 5-40
 -- ============================================================
 local origHRP = setmetatable({}, {__mode="k"})
 
-local function enlargeHitbox(npc)
+local function applyHitbox(npc)
     if not state.fatHitbox or not npc then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     if not origHRP[hrp] then
-        origHRP[hrp] = {
-            size = hrp.Size,
-            trans = hrp.Transparency,
-            coll = hrp.CanCollide,
-        }
+        origHRP[hrp] = { size = hrp.Size, trans = hrp.Transparency, coll = hrp.CanCollide }
     end
     local s = state.hitboxSize
     pcall(function()
         hrp.Size = Vector3.new(s, s, s)
-        hrp.Transparency = 1 -- невидимый, не урод
+        hrp.Transparency = 1
         hrp.CanCollide = false
+        hrp.Massless = true
     end)
 end
 
@@ -104,23 +101,25 @@ local function restoreHitbox(npc)
             hrp.Size = o.size
             hrp.Transparency = o.trans
             hrp.CanCollide = o.coll
+            hrp.Massless = false
         end)
         origHRP[hrp] = nil
     end
 end
 
 -- ============================================================
--- HOVER + COMBAT DROP
+-- HOVER: СТАБИЛЬНЫЙ, БЕЗ ДРОПА
 -- ============================================================
 local hoverTarget, hoverActive = nil, false
-local dropping = false
 
 local function setHover(npc)
-    if hoverActive and hoverTarget and hoverTarget ~= npc then restoreHitbox(hoverTarget) end
+    if hoverActive and hoverTarget and hoverTarget ~= npc then
+        restoreHitbox(hoverTarget)
+    end
     hoverTarget = npc
     hoverActive = npc ~= nil
     if humanoid then pcall(function() humanoid.PlatformStand = hoverActive end) end
-    if hoverActive and npc then enlargeHitbox(npc) end
+    if hoverActive and npc then applyHitbox(npc) end
 end
 
 RunService.Heartbeat:Connect(function()
@@ -136,8 +135,8 @@ RunService.Heartbeat:Connect(function()
         return
     end
     local target = hrp.Position
-    local h = dropping and state.strikeHeight or state.hoverHeight
-    local above = Vector3.new(target.X, target.Y + h, target.Z)
+    -- СТАБИЛЬНАЯ позиция над NPC, без дропа
+    local above = Vector3.new(target.X, target.Y + state.hoverHeight, target.Z)
     pcall(function() r.CFrame = CFrame.lookAt(above, target) end)
     pcall(function() r.Velocity = Vector3.new(0,0,0) end)
     if state.lockCamera and camera then
@@ -158,8 +157,7 @@ local function startFly()
     flyConn = RunService.RenderStepped:Connect(function(dt)
         if not state.fly then return end
         local rr = getRoot(); if not rr then return end
-        local cam = workspace.CurrentCamera
-        if not cam then return end
+        local cam = workspace.CurrentCamera; if not cam then return end
         local move = Vector3.new(0,0,0)
         if UserInput:IsKeyDown(Enum.KeyCode.W) then move = move + cam.CFrame.LookVector end
         if UserInput:IsKeyDown(Enum.KeyCode.S) then move = move - cam.CFrame.LookVector end
@@ -195,9 +193,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- TP LOCATIONS
--- ============================================================
 local TP_LOCATIONS = {
     { name="Bandit Camp", icon="🏕️", pos=Vector3.new(-1110,20,3200), sea=1 },
     { name="Pirate Village", icon="🏘️", pos=Vector3.new(-1200,20,3400), sea=1 },
@@ -321,6 +317,7 @@ local function nearest(tag)
     return best
 end
 
+-- ATTACK без дропа — просто экип + клик в центр + скиллы
 local function attack(npc)
     if not npc or not npc.Parent then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
@@ -337,15 +334,6 @@ local function attack(npc)
         end
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
-
-    local r = getRoot()
-    if state.combatDrop and r and state.hoverHeight > state.strikeHeight + 3 then
-        dropping = true
-        local target = hrp.Position
-        local divePos = Vector3.new(target.X, target.Y + state.strikeHeight, target.Z)
-        pcall(function() r.CFrame = CFrame.lookAt(divePos, target) end)
-        task.wait(0.05)
-    end
 
     if camera then
         pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, hrp.Position) end)
@@ -372,8 +360,6 @@ local function attack(npc)
             end)
         end
     end
-
-    dropping = false
 end
 
 local PRIO = {
@@ -553,7 +539,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV15"; sg.ResetOnSpawn=false
+sg.Name="BinBloxFruitsV16"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -637,7 +623,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v15 · clean hitbox"
+sl.BackgroundTransparency=1; sl.Text="v16 beta · stable hover"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -834,15 +820,11 @@ toggle(pages.farm,"Auto Farm Bosses","Prioritize bosses",
 section(pages.farm,"COMBAT / HOVER")
 slider(pages.farm,"Attack Speed",0.1,2.0,0.05,
     function() return state.attackSpeed end, function(v) state.attackSpeed=v end,"s")
-slider(pages.farm,"Hover Height",5,80,1,
+slider(pages.farm,"Hover Height",3,30,1,
     function() return state.hoverHeight end, function(v) state.hoverHeight=v end," studs")
-slider(pages.farm,"Strike Height",3,15,1,
-    function() return state.strikeHeight end, function(v) state.strikeHeight=v end," studs")
-toggle(pages.farm,"Combat Drop","Dive to strike height when attacking",
-    function() return state.combatDrop end, function(v) state.combatDrop=v end)
-slider(pages.farm,"Hitbox Size",5,30,1,
+slider(pages.farm,"Hitbox Size",5,40,1,
     function() return state.hitboxSize end, function(v) state.hitboxSize=v end," studs")
-toggle(pages.farm,"Fat Hitbox","Cube on NPC HRP (invisible)",
+toggle(pages.farm,"Fat Hitbox","Cube on HRP (invisible)",
     function() return state.fatHitbox end, function(v) state.fatHitbox=v end)
 toggle(pages.farm,"Lock Camera","Force cam on target",
     function() return state.lockCamera end, function(v) state.lockCamera=v end)
@@ -974,7 +956,6 @@ fSelLabel.Text = "  Selected: Dragon"
 fSelLabel.TextColor3 = C.accent2; fSelLabel.Font = Enum.Font.GothamBold
 fSelLabel.TextSize = 13; fSelLabel.TextXAlignment = Enum.TextXAlignment.Left
 crn(fSelLabel, 8); strk(fSelLabel, C.accent2, 1, 0.4)
-
 local fGrid = Instance.new("Frame")
 fGrid.Size = UDim2.new(1,0,0,180); fGrid.BackgroundColor3 = C.surface
 fGrid.BorderSizePixel = 0; fGrid.LayoutOrder = no(); fGrid.Parent = pages.tp
@@ -1078,7 +1059,7 @@ crn(ic,10); strk(ic,C.surface3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v15\nclean hitbox\n\nmade by Bin & Steve\nnya~"
+it.Text="Bin's Blox Fruits Hub v16 BETA\nstable hover\n\nmade by Bin & Steve\nnya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
@@ -1133,5 +1114,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v15","Loaded · clean hitbox",C.accent)
-print("[Bin's Hub v15] loaded.")
+notify("Bin's Hub v16 BETA","Stable hover · no jump",C.accent)
+print("[Bin's Hub v16 BETA] loaded.")

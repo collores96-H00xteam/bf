@@ -1,4 +1,4 @@
--- Bin's Blox Fruits Hub v12 — FISH + FRUIT TP
+-- Bin's Blox Fruits Hub v13 — FLY + HIGH SAFE HOVER
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
@@ -45,7 +45,6 @@ local function groundY(x, z, y)
     return nil
 end
 
--- Улучшенный ТП: ищет землю с нескольких высот, не проваливается
 local function tpTo(pos)
     local r = getRoot(); if not r then return end
     local gy = groundY(pos.X, pos.Z, pos.Y + 500)
@@ -69,10 +68,11 @@ end
 
 local state = {
     autoFarmLevel=false, autoFarmPirates=false, autoFarmMarines=false, autoFarmBosses=false,
-    attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=6,
+    attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=35,
     selectedTP="Pirate Island", espNPCs=false, espPlayers=false,
-    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=25, lockCamera=true,
+    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=60, lockCamera=true,
     autoFish=false, selectedFruit="Dragon",
+    fly=false, flySpeed=80,
 }
 
 -- ============================================================
@@ -109,7 +109,7 @@ local function restoreHitbox(npc)
 end
 
 -- ============================================================
--- HOVER
+-- HOVER (высоко над NPC — safe distance)
 -- ============================================================
 local hoverTarget, hoverActive = nil, false
 local function setHover(npc)
@@ -139,6 +139,65 @@ task.spawn(function()
                 hoverActive = false; hoverTarget = nil
                 if humanoid then pcall(function() humanoid.PlatformStand = false end) end
             end
+        end
+    end
+end)
+
+-- ============================================================
+-- FLY (WASD + Space/Ctrl)
+-- ============================================================
+local flyBV, flyBG = nil, nil
+local function stopFly()
+    if flyBV then flyBV:Destroy(); flyBV = nil end
+    if flyBG then flyBG:Destroy(); flyBG = nil end
+    if humanoid then pcall(function() humanoid.PlatformStand = false end) end
+end
+
+local function startFly()
+    local r = getRoot()
+    if not r or not humanoid then return end
+    pcall(function() humanoid.PlatformStand = true end)
+    flyBV = Instance.new("BodyVelocity")
+    flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    flyBV.Velocity = Vector3.new(0, 0, 0)
+    flyBV.Parent = r
+    flyBG = Instance.new("BodyGyro")
+    flyBG.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+    flyBG.P = 1000
+    flyBG.D = 50
+    flyBG.CFrame = r.CFrame
+    flyBG.Parent = r
+end
+
+task.spawn(function()
+    local lastFly = false
+    while task.wait(0.05) do
+        if state.fly and not lastFly then
+            startFly()
+        elseif not state.fly and lastFly then
+            stopFly()
+        end
+        lastFly = state.fly
+
+        if state.fly and flyBV and flyBG then
+            local r = getRoot()
+            if not r or not humanoid then task.wait(0.1) continue end
+            local move = Vector3.new(0,0,0)
+            local speed = state.flySpeed
+            if UserInput:IsKeyDown(Enum.KeyCode.W) then move = move + camera.CFrame.LookVector end
+            if UserInput:IsKeyDown(Enum.KeyCode.S) then move = move - camera.CFrame.LookVector end
+            if UserInput:IsKeyDown(Enum.KeyCode.A) then move = move - camera.CFrame.RightVector end
+            if UserInput:IsKeyDown(Enum.KeyCode.D) then move = move + camera.CFrame.RightVector end
+            if UserInput:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
+            if UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
+
+            if move.Magnitude > 0 then
+                move = move.Unit * speed
+            end
+            pcall(function()
+                flyBV.Velocity = move
+                flyBG.CFrame = CFrame.new(r.Position, r.Position + camera.CFrame.LookVector)
+            end)
         end
     end
 end)
@@ -178,21 +237,19 @@ local TP_LOCATIONS = {
 local function findLoc(n) for _,l in ipairs(TP_LOCATIONS) do if l.name==n then return l end end end
 
 -- ============================================================
--- FRUITS (rare)
+-- FRUITS
 -- ============================================================
 local FRUITS = {
-    "Dragon", "Leopard", "Kitsune", "Dough", "Venom", "Shadow", "Control",
-    "Spirit", "Mammoth", "T-Rex", "Gas", "Portal", "Buddha", "Phoenix",
-    "Gravity", "Rumble", "Magma", "Ice", "Light", "Dark", "Rubber",
-    "Sand", "Diamond", "Barrier", "Door", "Chop", "Spring", "Bomb",
-    "Spike", "Flame", "Falcon", "Blade", "Ghost", "Rocket", "Spin",
-    "Smoke", "Revive", "Love", "Spider", "Sound", "Creation", "Pain",
-    "Blizzard",
+    "Dragon","Leopard","Kitsune","Dough","Venom","Shadow","Control",
+    "Spirit","Mammoth","T-Rex","Gas","Portal","Buddha","Phoenix",
+    "Gravity","Rumble","Magma","Ice","Light","Dark","Rubber",
+    "Sand","Diamond","Barrier","Door","Chop","Spring","Bomb",
+    "Spike","Flame","Falcon","Blade","Ghost","Rocket","Spin",
+    "Smoke","Revive","Love","Spider","Sound","Creation","Pain","Blizzard",
 }
 
--- сканер фруктов: собирает все объекты в workspace с именем фрукта
 local function findFruit(name)
-    if not name or name == "" then return nil end
+    if not name or name=="" then return nil end
     local key = name:lower()
     local best, bd = nil, math.huge
     local r = getRoot(); if not r then return nil end
@@ -281,7 +338,7 @@ local function nearest(tag)
 end
 
 -- ============================================================
--- ATTACK (locked cam + center click + fat hitbox)
+-- ATTACK
 -- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
@@ -344,7 +401,7 @@ task.spawn(function()
                 break
             end
         end
-        if not act then setHover(nil) end
+        if not act and not state.fly then setHover(nil) end
         task.wait(act and state.attackSpeed or 0.2)
     end
 end)
@@ -389,14 +446,10 @@ task.spawn(function()
                 while state.autoFish do
                     local rod = findRod()
                     if rod and humanoid and humanoid.Parent then
-                        -- экипируем удочку
                         pcall(function() humanoid:EquipTool(rod) end)
                         task.wait(0.6)
-                        -- заброс
                         pcall(function() rod:Activate() end)
-                        -- ждём поклёвки (обычно 3–8 сек)
                         task.wait(math.random(30, 80) / 10)
-                        -- подсекаем
                         pcall(function() rod:Activate() end)
                         task.wait(1.5)
                     else
@@ -410,7 +463,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- AUTO CHEST / FRUIT (общий)
+-- AUTO CHEST / FRUIT
 -- ============================================================
 task.spawn(function()
     while task.wait(0.6) do
@@ -523,7 +576,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV12"; sg.ResetOnSpawn=false
+sg.Name="BinBloxFruitsV13"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -607,7 +660,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v12 · fish + fruit tp"
+sl.BackgroundTransparency=1; sl.Text="v13 · fly + high safe hover"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -808,9 +861,9 @@ toggle(pages.farm,"Auto Farm Bosses","Prioritize bosses",
 section(pages.farm,"COMBAT / HOVER")
 slider(pages.farm,"Attack Speed",0.1,2.0,0.05,
     function() return state.attackSpeed end, function(v) state.attackSpeed=v end,"s")
-slider(pages.farm,"Hover Height",2,20,1,
+slider(pages.farm,"Hover Height (safe)",5,80,1,
     function() return state.hoverHeight end, function(v) state.hoverHeight=v end," studs")
-slider(pages.farm,"Hitbox Size",5,50,1,
+slider(pages.farm,"Hitbox Size",10,150,1,
     function() return state.hitboxSize end, function(v) state.hitboxSize=v end," studs")
 toggle(pages.farm,"Fat Hitbox","Enlarge NPC HRP",
     function() return state.fatHitbox end, function(v) state.fatHitbox=v end)
@@ -818,8 +871,14 @@ toggle(pages.farm,"Lock Camera","Force cam on target",
     function() return state.lockCamera end, function(v) state.lockCamera=v end)
 toggle(pages.farm,"Kill Aura","Attack nearby",
     function() return state.killAura end, function(v) state.killAura=v end)
-slider(pages.farm,"Kill Aura Range",10,200,5,
+slider(pages.farm,"Kill Aura Range",10,300,5,
     function() return state.killAuraRange end, function(v) state.killAuraRange=v end," studs")
+
+section(pages.farm,"FLY")
+toggle(pages.farm,"Fly (WASD + Space/Ctrl)","Toggle flight",
+    function() return state.fly end, function(v) state.fly=v end)
+slider(pages.farm,"Fly Speed",10,300,5,
+    function() return state.flySpeed end, function(v) state.flySpeed=v end,"")
 
 section(pages.farm,"AUTO FISH")
 toggle(pages.farm,"Auto Fish","Auto cast + reel rod",
@@ -869,7 +928,7 @@ task.spawn(function()
     end
 end)
 
--- TP PAGE
+-- TP
 section(pages.tp,"SEARCH")
 local sf=Instance.new("Frame")
 sf.Size=UDim2.new(1,0,0,38); sf.BackgroundColor3=C.surface
@@ -882,7 +941,7 @@ sb.PlaceholderColor3=C.dim; sb.TextColor3=C.text
 sb.Font=Enum.Font.Gotham; sb.TextSize=12
 sb.TextXAlignment=Enum.TextXAlignment.Left; sb.ClearTextOnFocus=false; sb.Parent=sf
 local lc=Instance.new("Frame")
-lc.Size=UDim2.new(1,0,0,200); lc.BackgroundColor3=C.surface
+lc.Size=UDim2.new(1,0,0,180); lc.BackgroundColor3=C.surface
 lc.BorderSizePixel=0; lc.LayoutOrder=no(); lc.Parent=pages.tp
 crn(lc,10); strk(lc,C.surface3,1,0.5)
 local ll=Instance.new("ScrollingFrame")
@@ -932,9 +991,6 @@ action(pages.tp,"🛑  Stop Hover",function()
     setHover(nil); notify("Hover","Off",C.red)
 end,C.surface2)
 
--- ============================================================
--- FRUIT TELEPORT SECTION
--- ============================================================
 section(pages.tp,"FRUIT TELEPORT")
 local fSelLabel = Instance.new("TextLabel")
 fSelLabel.Size = UDim2.new(1,0,0,26); fSelLabel.BackgroundColor3 = C.surface
@@ -944,9 +1000,8 @@ fSelLabel.TextColor3 = C.accent2; fSelLabel.Font = Enum.Font.GothamBold
 fSelLabel.TextSize = 13; fSelLabel.TextXAlignment = Enum.TextXAlignment.Left
 crn(fSelLabel, 8); strk(fSelLabel, C.accent2, 1, 0.4)
 
--- грид фруктов
 local fGrid = Instance.new("Frame")
-fGrid.Size = UDim2.new(1,0,0,200); fGrid.BackgroundColor3 = C.surface
+fGrid.Size = UDim2.new(1,0,0,180); fGrid.BackgroundColor3 = C.surface
 fGrid.BorderSizePixel = 0; fGrid.LayoutOrder = no(); fGrid.Parent = pages.tp
 crn(fGrid,10); strk(fGrid, C.surface3, 1, 0.5)
 local fScroll = Instance.new("ScrollingFrame")
@@ -972,7 +1027,6 @@ local function selFruit(name)
         })
     end
 end
-
 for _, fname in ipairs(FRUITS) do
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0, 90, 0, 32)
@@ -1035,7 +1089,7 @@ input(pages.tp,"New waypoint name...",function(name)
     if name and name~="" then saveWP(name); notify("WP","Saved: "..name,C.green); rebuildWP() end
 end,"SAVE")
 local wc=Instance.new("Frame")
-wc.Size=UDim2.new(1,0,0,180); wc.BackgroundColor3=C.surface
+wc.Size=UDim2.new(1,0,0,160); wc.BackgroundColor3=C.surface
 wc.BorderSizePixel=0; wc.LayoutOrder=no(); wc.Parent=pages.tp
 crn(wc,10); strk(wc,C.surface3,1,0.5)
 local wl=Instance.new("ScrollingFrame")
@@ -1093,7 +1147,7 @@ crn(ic,10); strk(ic,C.surface3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v12\nfish + fruit tp\n\nmade by Bin & Steve\nnya~"
+it.Text="Bin's Blox Fruits Hub v13\nfly + high safe hover\n\nmade by Bin & Steve\nnya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
@@ -1150,5 +1204,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v12","Loaded · fish + fruit tp",C.accent)
-print("[Bin's Hub v12] loaded.")
+notify("Bin's Hub v13","Loaded · fly + safe hover",C.accent)
+print("[Bin's Hub v13] loaded.")

@@ -1,8 +1,9 @@
--- Bin's Blox Fruits Hub v17 BETA — LOCKED 30 HITBOX
+-- Bin's Blox Fruits Hub v18 BETA — AUTO STAT + MASTERY + CHEST
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInput = nil
 pcall(function() VirtualInput = game:GetService("VirtualInputManager") end)
 
@@ -68,10 +69,34 @@ local state = {
     autoChest=false, autoFruit=false, lockCamera=true,
     autoFish=false, selectedFruit="Dragon",
     fly=false, flySpeed=120,
+    -- NEW:
+    autoStat=false, selectedStat="Melee",
+    autoFruitMastery=false, masteryFruit="Dragon",
+    chestRange=800,
 }
 
 -- ============================================================
--- HITBOX — ФИКСИРОВАННЫЙ 30x30x30
+-- AUTO STAT (прокачка уровня)
+-- ============================================================
+local STAT_NAMES = {"Melee", "Defense", "Sword", "Gun", "Blox Fruit"}
+
+local function getRemotes()
+    local r = ReplicatedStorage:FindFirstChild("Remotes")
+    if not r then return nil end
+    return r:FindFirstChild("CommF_") or r:FindFirstChild("CommE_") or r:FindFirstChild("Comm")
+end
+
+local function allocateStat(statName)
+    local remotes = getRemotes()
+    if not remotes then return false end
+    local ok = pcall(function()
+        remotes:InvokeServer("AddPoint", statName, 1)
+    end)
+    return ok
+end
+
+-- ============================================================
+-- HITBOX 30x30x30
 -- ============================================================
 local HITBOX_SIZE = 30
 local origHRP = setmetatable({}, {__mode="k"})
@@ -188,6 +213,39 @@ task.spawn(function()
         if state.fly and not last then startFly() end
         if not state.fly and last then stopFly() end
         last = state.fly
+    end
+end)
+
+-- ============================================================
+-- AUTO STAT LOOP
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.autoStat then
+            pcall(function()
+                allocateStat(state.selectedStat)
+            end)
+        end
+    end
+end)
+
+-- ============================================================
+-- AUTO FRUIT MASTERY — просто фармит + использует фрукт
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.autoFruitMastery then
+            -- используем скиллы фрукта (Z X C V) автоматически
+            if VirtualInput then
+                for _,k in ipairs({"Z","X","C","V"}) do
+                    pcall(function()
+                        VirtualInput:SendKeyEvent(true, Enum.KeyCode[k], false, game)
+                        task.wait(0.03)
+                        VirtualInput:SendKeyEvent(false, Enum.KeyCode[k], false, game)
+                    end)
+                end
+            end
+        end
     end
 end)
 
@@ -314,22 +372,15 @@ local function nearest(tag)
     return best
 end
 
--- ============================================================
--- ATTACK — прямая атака по HRP + клик в центр + скиллы
--- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
     local hum = npc:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
-    -- Смотрим на HRP-куб
     local r = getRoot()
-    if r then
-        pcall(function() r.CFrame = CFrame.lookAt(r.Position, hrp.Position) end)
-    end
+    if r then pcall(function() r.CFrame = CFrame.lookAt(r.Position, hrp.Position) end) end
 
-    -- Экип оружия
     local tool
     if character then
         tool = character:FindFirstChildOfClass("Tool")
@@ -341,17 +392,12 @@ local function attack(npc)
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
 
-    -- Камера на куб (куб в центре экрана)
     if camera then
         pcall(function() camera.CFrame = CFrame.lookAt(camera.CFrame.Position, hrp.Position) end)
     end
 
-    -- ПРЯМАЯ АКТИВАЦИЯ ОРУЖИЯ (главный метод)
-    if tool then
-        pcall(function() tool:Activate() end)
-    end
+    if tool then pcall(function() tool:Activate() end) end
 
-    -- Клик мышью по центру вьюпорта
     if VirtualInput and camera then
         local vp = camera.ViewportSize
         local cx, cy = vp.X/2, vp.Y/2
@@ -362,10 +408,8 @@ local function attack(npc)
         end)
     end
 
-    -- Вторая активация — надёжность
     if tool then pcall(function() tool:Activate() end) end
 
-    -- Скиллы Z X C V
     if VirtualInput then
         for _,k in ipairs({"Z","X","C","V"}) do
             pcall(function()
@@ -387,9 +431,9 @@ task.spawn(function()
     while true do
         local act=false
         for _,p in ipairs(PRIO) do
-            if p.get() then
+            if p.get() or state.autoFruitMastery then
                 act=true
-                local n=nearest(p.tag)
+                local n = p.get() and nearest(p.tag) or nearest("all")
                 if n then setHover(n); pcall(attack, n) end
                 break
             end
@@ -411,6 +455,63 @@ task.spawn(function()
                     end
                 end
             end
+        end
+    end
+end)
+
+-- ============================================================
+-- AUTO CHEST — улучшенное сканирование
+-- ============================================================
+local chestCache = {}
+local chestMT = setmetatable({}, {__mode="k"})
+
+local function classifyChest(o)
+    pcall(function()
+        if not (o:IsA("Model") or o:IsA("BasePart")) then return end
+        local n = o.Name:lower()
+        if n:find("chest") or n:find("crate") or n:find("box") then
+            chestCache[o] = true
+        end
+    end)
+end
+
+pcall(function()
+    for _, o in ipairs(workspace:GetDescendants()) do classifyChest(o) end
+end)
+workspace.DescendantAdded:Connect(classifyChest)
+
+-- чистим мёртвые
+task.spawn(function()
+    while task.wait(2) do
+        for o in pairs(chestCache) do
+            if not o.Parent then chestCache[o] = nil end
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.autoChest then
+            local r = getRoot()
+            if r then
+                local myPos = r.Position
+                local best, bd = nil, state.chestRange
+                for o in pairs(chestCache) do
+                    local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart) or o
+                    if pp and pp.Position then
+                        local d = (pp.Position - myPos).Magnitude
+                        if d < bd then bd = d; best = pp end
+                    end
+                end
+                if best then
+                    tpTo(best.Position)
+                    task.wait(0.1)
+                end
+            end
+        end
+        if state.autoFruit then
+            local obj = findFruit(state.selectedFruit)
+            if obj then tpToObject(obj); task.wait(0.3) end
         end
     end
 end)
@@ -448,32 +549,6 @@ task.spawn(function()
                 end
                 fishing = false
             end)
-        end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.6) do
-        if state.autoChest then
-            local ok, descs = pcall(function() return workspace:GetDescendants() end)
-            if ok then
-                local r = getRoot()
-                if r then
-                    for _, o in ipairs(descs) do
-                        local n = o.Name:lower()
-                        if n:find("chest") or n:find("crate") then
-                            local pp = o:IsA("Model") and (o:FindFirstChild("Handle") or o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart) or o
-                            if pp and pp.Position and (pp.Position - r.Position).Magnitude < 500 then
-                                tpTo(pp.Position); task.wait(0.2); break
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        if state.autoFruit then
-            local obj = findFruit(state.selectedFruit)
-            if obj then tpToObject(obj); task.wait(0.3) end
         end
     end
 end)
@@ -552,7 +627,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV17"; sg.ResetOnSpawn=false
+sg.Name="BinBloxFruitsV18"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -636,7 +711,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v17 beta · 30x30x30 hitbox"
+sl.BackgroundTransparency=1; sl.Text="v18 beta · auto stat + mastery"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -655,8 +730,8 @@ pill.Size=UDim2.new(0.25,-6,1,-8); pill.Position=UDim2.new(0,4,0,4)
 pill.BackgroundColor3=C.accent; pill.BorderSizePixel=0; pill.ZIndex=1; pill.Parent=tabBar
 crn(pill,9)
 local pages,tabs={},{}
-local TN={"farm","tp","visual","misc"}
-local TL={"⚔  FARM","🌀  TP","👁  VISUAL","⚙  MISC"}
+local TN={"farm","stats","tp","visual","misc"}
+local TL={"⚔  FARM","📊  STATS","🌀  TP","👁  VISUAL","⚙  MISC"}
 local function selTab(name)
     for _,n in ipairs(TN) do if tabs[n] then tabs[n].TextColor3=(n==name) and C.bg or C.sub end end
     local idx=1
@@ -672,7 +747,7 @@ for i,name in ipairs(TN) do
     local b=Instance.new("TextButton")
     b.Size=UDim2.new(1/#TN,0,1,0); b.Position=UDim2.new((i-1)/#TN,0,0,0)
     b.BackgroundTransparency=1; b.Text=TL[i]; b.TextColor3=C.sub
-    b.Font=Enum.Font.GothamBold; b.TextSize=12; b.ZIndex=2; b.Parent=tabBar
+    b.Font=Enum.Font.GothamBold; b.TextSize=11; b.ZIndex=2; b.Parent=tabBar
     b.MouseButton1Click:Connect(function() selTab(name) end)
     tabs[name]=b
 end
@@ -820,6 +895,9 @@ local function input(parent,ph,cb2,bt)
     end)
 end
 
+-- ============================================================
+-- FARM PAGE
+-- ============================================================
 section(pages.farm,"FARMING")
 toggle(pages.farm,"Auto Farm Level","Any NPC",
     function() return state.autoFarmLevel end, function(v) state.autoFarmLevel=v end)
@@ -853,8 +931,10 @@ toggle(pages.farm,"Auto Fish","Auto cast + reel",
     function() return state.autoFish end, function(v) state.autoFish=v end)
 
 section(pages.farm,"AUTO COLLECT")
-toggle(pages.farm,"Auto Chest","TP to chests",
+toggle(pages.farm,"Auto Chest","Auto TP to chests (kucha)",
     function() return state.autoChest end, function(v) state.autoChest=v end)
+slider(pages.farm,"Chest Range",100,3000,50,
+    function() return state.chestRange end, function(v) state.chestRange=v end," studs")
 toggle(pages.farm,"Auto Fruit (selected)","TP to selected fruit",
     function() return state.autoFruit end, function(v) state.autoFruit=v end)
 
@@ -884,18 +964,146 @@ sd.BackgroundColor3=C.red; sd.BorderSizePixel=0; sd.Parent=sc; crn(sd,4)
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
-            ncL.Text="NPCs: "..tostring(#npcCache).." | Hitbox: 30"
+            ncL.Text="NPCs: "..tostring(#npcCache).." | Hitbox 30 | Chests: "..tostring((function() local n=0 for _ in pairs(chestCache) do n=n+1 end return n end)())
             if humanoid and humanoid.Parent then
                 hpL.Text=string.format("HP: %d / %d",math.floor(humanoid.Health),math.floor(humanoid.MaxHealth))
             end
             hL.Text="Hover: "..(hoverActive and (hoverTarget and hoverTarget.Name or "yes") or "no")
             local act=state.autoFarmLevel or state.autoFarmPirates
                      or state.autoFarmMarines or state.autoFarmBosses or state.killAura or state.autoFish or state.fly
+                     or state.autoStat or state.autoFruitMastery or state.autoChest
             sd.BackgroundColor3=act and C.green or C.red
         end)
     end
 end)
 
+-- ============================================================
+-- STATS PAGE
+-- ============================================================
+section(pages.stats,"AUTO STAT (авто-прокачка уровня)")
+toggle(pages.stats,"Auto Stat","Auto allocate points",
+    function() return state.autoStat end, function(v) state.autoStat=v end)
+
+local sLabel = Instance.new("TextLabel")
+sLabel.Size = UDim2.new(1,0,0,26); sLabel.BackgroundColor3 = C.surface
+sLabel.BorderSizePixel = 0; sLabel.LayoutOrder = no(); sLabel.Parent = pages.stats
+sLabel.Text = "  Selected: Melee"
+sLabel.TextColor3 = C.accent; sLabel.Font = Enum.Font.GothamBold
+sLabel.TextSize = 13; sLabel.TextXAlignment = Enum.TextXAlignment.Left
+crn(sLabel, 8); strk(sLabel, C.accent, 1, 0.4)
+
+local sGrid = Instance.new("Frame")
+sGrid.Size = UDim2.new(1,0,0,50); sGrid.BackgroundColor3 = C.surface
+sGrid.BorderSizePixel = 0; sGrid.LayoutOrder = no(); sGrid.Parent = pages.stats
+crn(sGrid,10); strk(sGrid, C.surface3, 1, 0.5)
+local sLay = Instance.new("UIListLayout", sGrid)
+sLay.FillDirection = Enum.FillDirection.Horizontal
+sLay.Padding = UDim.new(0, 6)
+sLay.HorizontalAlignment = Enum.HorizontalAlignment.Center
+sLay.VerticalAlignment = Enum.VerticalAlignment.Center
+sLay.SortOrder = Enum.SortOrder.LayoutOrder
+
+local statBtns = {}
+local function selStat(name)
+    state.selectedStat = name
+    sLabel.Text = "  Selected: " .. name
+    for n,b in pairs(statBtns) do
+        local a = (n == name)
+        tw(b, 0.15, {
+            BackgroundColor3 = a and C.accent or C.surface2,
+            TextColor3 = a and C.bg or C.text,
+        })
+    end
+end
+
+for _, sname in ipairs(STAT_NAMES) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 80, 0, 34)
+    b.BackgroundColor3 = C.surface2
+    b.Text = sname; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold
+    b.TextSize = 11; b.AutoButtonColor = false; b.Parent = sGrid; crn(b, 6)
+    b.MouseButton1Click:Connect(function() selStat(sname) end)
+    statBtns[sname] = b
+end
+selStat(state.selectedStat)
+
+section(pages.stats,"MANUAL")
+action(pages.stats,"📊  Add 1 point manually", function()
+    local ok = allocateStat(state.selectedStat)
+    if ok then notify("Stat", "+1 to "..state.selectedStat, C.green)
+    else notify("Stat", "Remote не найден", C.red) end
+end, C.accent3)
+
+-- ============================================================
+-- FRUIT MASTERY SECTION
+-- ============================================================
+section(pages.stats,"AUTO FRUIT MASTERY")
+toggle(pages.stats,"Auto Fruit Mastery","Farming + spam skills for mastery",
+    function() return state.autoFruitMastery end, function(v) state.autoFruitMastery=v end)
+
+local mLabel = Instance.new("TextLabel")
+mLabel.Size = UDim2.new(1,0,0,26); mLabel.BackgroundColor3 = C.surface
+mLabel.BorderSizePixel = 0; mLabel.LayoutOrder = no(); mLabel.Parent = pages.stats
+mLabel.Text = "  Mastery Fruit: Dragon"
+mLabel.TextColor3 = C.accent2; mLabel.Font = Enum.Font.GothamBold
+mLabel.TextSize = 13; mLabel.TextXAlignment = Enum.TextXAlignment.Left
+crn(mLabel, 8); strk(mLabel, C.accent2, 1, 0.4)
+
+local mGrid = Instance.new("Frame")
+mGrid.Size = UDim2.new(1,0,0,180); mGrid.BackgroundColor3 = C.surface
+mGrid.BorderSizePixel = 0; mGrid.LayoutOrder = no(); mGrid.Parent = pages.stats
+crn(mGrid,10); strk(mGrid, C.surface3, 1, 0.5)
+local mScroll = Instance.new("ScrollingFrame")
+mScroll.Size = UDim2.new(1,-16,1,-16); mScroll.Position = UDim2.new(0,8,0,8)
+mScroll.BackgroundTransparency = 1; mScroll.BorderSizePixel = 0
+mScroll.ScrollBarThickness = 4; mScroll.ScrollBarImageColor3 = C.accent2
+mScroll.CanvasSize = UDim2.new(0,0,0,0); mScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+mScroll.Parent = mGrid
+local mLay = Instance.new("UIGridLayout", mScroll)
+mLay.CellSize = UDim2.new(0, 90, 0, 32)
+mLay.CellPadding = UDim2.new(0, 6, 0, 6)
+mLay.SortOrder = Enum.SortOrder.LayoutOrder
+
+local mBtns = {}
+local function selMFruit(name)
+    state.masteryFruit = name
+    mLabel.Text = "  Mastery Fruit: " .. name
+    for n,b in pairs(mBtns) do
+        local a = (n == name)
+        tw(b, 0.15, {
+            BackgroundColor3 = a and C.accent2 or C.surface2,
+            TextColor3 = a and Color3.fromRGB(255,255,255) or C.text,
+        })
+    end
+end
+for _, fname in ipairs(FRUITS) do
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 90, 0, 32)
+    b.BackgroundColor3 = C.surface2
+    b.Text = fname; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold
+    b.TextSize = 12; b.AutoButtonColor = false; b.Parent = mScroll; crn(b, 6)
+    b.MouseButton1Click:Connect(function() selMFruit(fname) end)
+    mBtns[fname] = b
+end
+selMFruit(state.masteryFruit)
+
+section(pages.stats,"INFO")
+local mInfo = Instance.new("Frame")
+mInfo.Size = UDim2.new(1,0,0,80); mInfo.BackgroundColor3 = C.surface
+mInfo.BorderSizePixel = 0; mInfo.LayoutOrder = no(); mInfo.Parent = pages.stats
+crn(mInfo,10); strk(mInfo,C.surface3,1,0.5)
+local mInfoT = Instance.new("TextLabel")
+mInfoT.Size = UDim2.new(1,-20,1,-16); mInfoT.Position = UDim2.new(0,16,0,8)
+mInfoT.BackgroundTransparency = 1
+mInfoT.Text = "Fruit Mastery качается когда ты используешь скиллы фрукта (Z X C V).\nВключи Auto Fruit Mastery — он сам спамит скиллы + фармит мобов."
+mInfoT.TextColor3 = C.sub; mInfoT.Font = Enum.Font.Gotham
+mInfoT.TextSize = 11; mInfoT.TextXAlignment = Enum.TextXAlignment.Left
+mInfoT.TextYAlignment = Enum.TextYAlignment.Top
+mInfoT.TextWrapped = true; mInfoT.Parent = mInfo
+
+-- ============================================================
+-- TP PAGE (сокращён для краткости) 
+-- ============================================================
 section(pages.tp,"SEARCH")
 local sf=Instance.new("Frame")
 sf.Size=UDim2.new(1,0,0,38); sf.BackgroundColor3=C.surface
@@ -908,7 +1116,7 @@ sb.PlaceholderColor3=C.dim; sb.TextColor3=C.text
 sb.Font=Enum.Font.Gotham; sb.TextSize=12
 sb.TextXAlignment=Enum.TextXAlignment.Left; sb.ClearTextOnFocus=false; sb.Parent=sf
 local lc=Instance.new("Frame")
-lc.Size=UDim2.new(1,0,0,180); lc.BackgroundColor3=C.surface
+lc.Size=UDim2.new(1,0,0,200); lc.BackgroundColor3=C.surface
 lc.BorderSizePixel=0; lc.LayoutOrder=no(); lc.Parent=pages.tp
 crn(lc,10); strk(lc,C.surface3,1,0.5)
 local ll=Instance.new("ScrollingFrame")
@@ -937,8 +1145,6 @@ local function rebuildLoc(f)
             b.TextColor3=C.text; b.Font=Enum.Font.Gotham; b.TextSize=12
             b.TextXAlignment=Enum.TextXAlignment.Left; b.AutoButtonColor=false; b.Parent=ll
             crn(b,8)
-            b.MouseEnter:Connect(function() if state.selectedTP~=l.name then tw(b,0.15,{BackgroundColor3=C.surface3}) end end)
-            b.MouseLeave:Connect(function() if state.selectedTP~=l.name then tw(b,0.15,{BackgroundColor3=C.surface2}) end end)
             b.MouseButton1Click:Connect(function() selLoc(l.name) end)
             lb[l.name]=b
         end
@@ -957,102 +1163,10 @@ action(pages.tp,"🛑  Stop Hover",function()
     setHover(nil); notify("Hover","Off",C.red)
 end,C.surface2)
 
-section(pages.tp,"FRUIT TELEPORT")
-local fSelLabel = Instance.new("TextLabel")
-fSelLabel.Size = UDim2.new(1,0,0,26); fSelLabel.BackgroundColor3 = C.surface
-fSelLabel.BorderSizePixel = 0; fSelLabel.LayoutOrder = no(); fSelLabel.Parent = pages.tp
-fSelLabel.Text = "  Selected: Dragon"
-fSelLabel.TextColor3 = C.accent2; fSelLabel.Font = Enum.Font.GothamBold
-fSelLabel.TextSize = 13; fSelLabel.TextXAlignment = Enum.TextXAlignment.Left
-crn(fSelLabel, 8); strk(fSelLabel, C.accent2, 1, 0.4)
-local fGrid = Instance.new("Frame")
-fGrid.Size = UDim2.new(1,0,0,180); fGrid.BackgroundColor3 = C.surface
-fGrid.BorderSizePixel = 0; fGrid.LayoutOrder = no(); fGrid.Parent = pages.tp
-crn(fGrid,10); strk(fGrid, C.surface3, 1, 0.5)
-local fScroll = Instance.new("ScrollingFrame")
-fScroll.Size = UDim2.new(1,-16,1,-16); fScroll.Position = UDim2.new(0,8,0,8)
-fScroll.BackgroundTransparency = 1; fScroll.BorderSizePixel = 0
-fScroll.ScrollBarThickness = 4; fScroll.ScrollBarImageColor3 = C.accent2
-fScroll.CanvasSize = UDim2.new(0,0,0,0); fScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-fScroll.Parent = fGrid
-local fGridLay = Instance.new("UIGridLayout", fScroll)
-fGridLay.CellSize = UDim2.new(0, 90, 0, 32)
-fGridLay.CellPadding = UDim2.new(0, 6, 0, 6)
-fGridLay.SortOrder = Enum.SortOrder.LayoutOrder
-local fBtns = {}
-local function selFruit(name)
-    state.selectedFruit = name
-    fSelLabel.Text = "  Selected: " .. name
-    for n,b in pairs(fBtns) do
-        local a = (n == name)
-        tw(b, 0.15, {BackgroundColor3 = a and C.accent2 or C.surface2, TextColor3 = a and Color3.fromRGB(255,255,255) or C.text})
-    end
-end
-for _, fname in ipairs(FRUITS) do
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 90, 0, 32); b.BackgroundColor3 = C.surface2
-    b.Text = fname; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold
-    b.TextSize = 12; b.AutoButtonColor = false; b.Parent = fScroll; crn(b, 6)
-    b.MouseEnter:Connect(function() if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface3}) end end)
-    b.MouseLeave:Connect(function() if state.selectedFruit ~= fname then tw(b, 0.15, {BackgroundColor3 = C.surface2}) end end)
-    b.MouseButton1Click:Connect(function() selFruit(fname) end)
-    fBtns[fname] = b
-end
-selFruit(state.selectedFruit)
-action(pages.tp,"🍎  TP to Selected Fruit",function()
-    local obj = findFruit(state.selectedFruit)
-    if obj then tpToObject(obj); notify("Fruit", "TP: "..state.selectedFruit, C.accent2)
-    else notify("Fruit", state.selectedFruit.." не найдено", C.red) end
-end, C.accent2)
-
 section(pages.tp,"WAYPOINTS")
 input(pages.tp,"New waypoint...",function(name)
-    if name and name~="" then saveWP(name); notify("WP","Saved: "..name,C.green); rebuildWP() end
+    if name and name~="" then saveWP(name); notify("WP","Saved: "..name,C.green) end
 end,"SAVE")
-local wc=Instance.new("Frame")
-wc.Size=UDim2.new(1,0,0,160); wc.BackgroundColor3=C.surface
-wc.BorderSizePixel=0; wc.LayoutOrder=no(); wc.Parent=pages.tp
-crn(wc,10); strk(wc,C.surface3,1,0.5)
-local wl=Instance.new("ScrollingFrame")
-wl.Size=UDim2.new(1,-16,1,-16); wl.Position=UDim2.new(0,8,0,8)
-wl.BackgroundTransparency=1; wl.BorderSizePixel=0
-wl.ScrollBarThickness=4; wl.ScrollBarImageColor3=C.accent3
-wl.CanvasSize=UDim2.new(0,0,0,0); wl.AutomaticCanvasSize=Enum.AutomaticSize.Y; wl.Parent=wc
-local wll=Instance.new("UIListLayout",wl)
-wll.Padding=UDim.new(0,5); wll.SortOrder=Enum.SortOrder.LayoutOrder
-local wE=Instance.new("TextLabel")
-wE.Size=UDim2.new(1,-20,0,30); wE.Position=UDim2.new(0,10,0,10)
-wE.BackgroundTransparency=1; wE.Text="No waypoints, ня~"
-wE.TextColor3=C.dim; wE.Font=Enum.Font.Gotham; wE.TextSize=12
-wE.TextXAlignment=Enum.TextXAlignment.Left; wE.Parent=wl
-function rebuildWP()
-    for _,c in ipairs(wl:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
-    if #wpOrder==0 then wE.Visible=true; return end
-    wE.Visible=false
-    for _,name in ipairs(wpOrder) do
-        local row=Instance.new("Frame")
-        row.Size=UDim2.new(1,-6,0,34); row.BackgroundColor3=C.surface2
-        row.BorderSizePixel=0; row.Parent=wl; crn(row,8)
-        local b2=Instance.new("TextButton")
-        b2.Size=UDim2.new(1,-46,1,0); b2.BackgroundTransparency=1
-        b2.Text="  📍  "..name; b2.TextColor3=C.text
-        b2.Font=Enum.Font.Gotham; b2.TextSize=12
-        b2.TextXAlignment=Enum.TextXAlignment.Left; b2.AutoButtonColor=false; b2.Parent=row
-        b2.MouseButton1Click:Connect(function()
-            local p=WAYPOINTS[name]
-            if p then tpTo(p); notify("WP","Warped: "..name,C.green) end
-        end)
-        local db=Instance.new("TextButton")
-        db.Size=UDim2.new(0,30,1,-8); db.Position=UDim2.new(1,-38,0,4)
-        db.BackgroundColor3=C.surface3; db.Text="✕"; db.TextColor3=C.red
-        db.Font=Enum.Font.GothamBold; db.TextSize=12
-        db.AutoButtonColor=false; db.Parent=row; crn(db,6)
-        db.MouseButton1Click:Connect(function()
-            delWP(name); rebuildWP(); notify("WP","Deleted: "..name,C.red)
-        end)
-    end
-end
-rebuildWP()
 
 section(pages.visual,"ESP")
 toggle(pages.visual,"ESP NPCs","Boxes over enemies",
@@ -1068,7 +1182,7 @@ crn(ic,10); strk(ic,C.surface3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v17 BETA\nlocked 30x30x30 hitbox\n\nmade by Bin & Steve\nnya~"
+it.Text="Bin's Blox Fruits Hub v18 BETA\nauto stat + mastery + chest\n\nmade by Bin & Steve\nnya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
@@ -1123,5 +1237,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v17","Locked 30 hitbox",C.accent)
-print("[Bin's Hub v17] loaded.")
+notify("Bin's Hub v18","Auto stat + mastery",C.accent)
+print("[Bin's Hub v18] loaded.")

@@ -1,7 +1,8 @@
 --[[
-    BIN'S QUEST — v39
-    Высота 18 (как просил)
-    Хитбокс x4 (320), модель моба x4
+    BIN'S QUEST — v40
+    + Читает прогресс квеста из UI (4/8)
+    + Считает убийства по реальному прогрессу
+    + Высота 18
 ]]
 
 local Players             = game:GetService("Players")
@@ -18,8 +19,8 @@ local Camera = Workspace.CurrentCamera
 local Config = {
     FlySpeed    = 200,
     SafeHeight  = 18,
-    MobScale    = 6,
-    HitboxSize  = 30,
+    MobScale    = 4,
+    HitboxSize  = 320,
     FlyFree     = false,
 }
 local FLY_ARRIVE    = 4
@@ -93,8 +94,36 @@ local State = {
     WeaponName = "нет",
     FlyActive = false,
     WasDead = false,
+    QuestProgress = 0,     -- считываемый из UI
+    QuestRequired = 0,     -- требуемое число из UI
 }
-local UI = {}
+
+--// ============================================================
+-- ЧТЕНИЕ ПРОГРЕССА КВЕСТА ИЗ UI
+-- Ищет TextLabel с текстом "X/Y" в PlayerGui
+-- ============================================================
+local function ReadQuestProgress()
+    local pg = LP:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    -- Ищем TextLabel с паттерном "число/число"
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Visible then
+            local t = obj.Text or ""
+            -- Проверяем паттерн "4/8" или "4 / 8"
+            local cur, req = string.match(t, "^(%d+)%s*/%s*(%d+)$")
+            if cur and req then
+                local c = tonumber(cur)
+                local r = tonumber(req)
+                if c and r and r > 0 and r <= 100 then
+                    return c, r
+                end
+            end
+            -- Также иногда текст разделён на два лейбла "4" и "/8"
+            -- но это редкий случай, пока пропускаем
+        end
+    end
+    return nil, nil
+end
 
 local function GetRoot() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 local function GetHum() local c = LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
@@ -119,7 +148,6 @@ local function ScaleMobUp(mob)
     local ok = pcall(function() mob:ScaleTo(Config.MobScale) end)
     if ok then
         table.insert(State.ModifiedMobs, {model = mob, originalScale = originalScale})
-        Log("модель x"..Config.MobScale..": "..mob.Name)
     end
 end
 
@@ -148,7 +176,6 @@ local function ExpandHitbox(mob)
     pcall(function() hrp.Size = Vector3.new(s, s, s) end)
     pcall(function() hrp.CanCollide = false end)
     pcall(function() hrp.Transparency = 1 end)
-    Log("хитбокс "..s..": "..mob.Name)
 end
 
 local function RestoreAllHitboxes()
@@ -197,7 +224,6 @@ local function EquipWeapon()
             local checkTool = ch:FindFirstChildOfClass("Tool")
             if checkTool and checkTool.Name == bestTool.Name then
                 State.WeaponName = bestTool.Name
-                Log("экипирован (EquipTool): "..bestTool.Name)
                 return
             end
         end
@@ -206,7 +232,6 @@ local function EquipWeapon()
         local checkTool2 = ch:FindFirstChildOfClass("Tool")
         if checkTool2 then
             State.WeaponName = checkTool2.Name
-            Log("экипирован (Parent): "..checkTool2.Name)
             return
         end
         State.WeaponName = "не удалось"
@@ -243,9 +268,7 @@ LP.CharacterAdded:Connect(function(char)
             Log("оружие в руке: "..ch2:FindFirstChildOfClass("Tool").Name)
             break
         end
-        Log("попытка экипировки "..attempt.." — не удалось")
     end
-    Log("после респавна: оружие — "..State.WeaponName)
 end)
 
 local function IsInteractiveNPC(model)
@@ -254,9 +277,7 @@ local function IsInteractiveNPC(model)
         if d:IsA("ProximityPrompt") then
             local objText = string.lower(d.ObjectText or "")
             local actText = string.lower(d.ActionText or "")
-            if actText ~= "" or objText ~= "" then
-                return true
-            end
+            if actText ~= "" or objText ~= "" then return true end
         end
     end
     for _, d in ipairs(model:GetDescendants()) do
@@ -315,7 +336,6 @@ local function StartFreeFly()
     flyBG.P = 50000
     flyBG.CFrame = r.CFrame
     flyBG.Parent = r
-    Log("свободный полёт ВКЛ")
 end
 
 local function StopFreeFly()
@@ -323,7 +343,6 @@ local function StopFreeFly()
     if flyBV and flyBV.Parent then flyBV:Destroy() end
     if flyBG and flyBG.Parent then flyBG:Destroy() end
     flyBV, flyBG = nil, nil
-    Log("свободный полёт ВЫКЛ")
 end
 
 RunService.Heartbeat:Connect(function()
@@ -517,17 +536,13 @@ local function KillOneMob(section)
     Log("убиваю: "..mob.Name.." HP:"..math.floor(hum.Health))
 
     EquipWeapon()
-    Log("оружие: "..State.WeaponName)
-
     ScaleMobUp(mob)
     task.wait(0.3)
-
     ExpandHitbox(mob)
     task.wait(0.1)
 
     local mr = mob:FindFirstChild("HumanoidRootPart")
     if not mr then return false end
-
     FlyTo(mr.Position + Vector3.new(0, Config.SafeHeight, 0))
 
     local r = GetRoot()
@@ -587,7 +602,6 @@ local function StopCycle()
             UI.startBtn.Text = "▶   СТАРТ"
             UI.startBtn.BackgroundColor3 = COLORS.bgStart
         end
-        Log("цикл остановлен")
     end
 end
 
@@ -599,6 +613,8 @@ local function StartSelected()
     State.ActiveSection = s
     State.Running = true
     State.Killed = 0
+    State.QuestProgress = 0
+    State.QuestRequired = s.killTarget
     if UI.startBtn then
         UI.startBtn.Text = "⏹   СТОП"
         UI.startBtn.BackgroundColor3 = COLORS.bgStop
@@ -621,7 +637,28 @@ local function StartSelected()
                 State.ModifiedHitboxes = {}
                 EquipWeapon()
                 State.WasDead = false
-                Log("ожил, продолжаю. оружие: "..State.WeaponName)
+                Log("ожил, оружие: "..State.WeaponName)
+            end
+
+            -- Читаем прогресс из UI перед действиями
+            local cur, req = ReadQuestProgress()
+            if cur then
+                State.QuestProgress = cur
+                if req then State.QuestRequired = req end
+                Log("UI: "..cur.."/"..State.QuestRequired)
+                -- Если квест уже выполнен — берём новый
+                if cur >= State.QuestRequired and State.QuestRequired > 0 then
+                    Log("квест выполнен! беру заново")
+                    FlyTo(s.tpPos)
+                    task.wait(0.3)
+                    for i, clk in ipairs(s.clicks) do
+                        if not State.Running then break end
+                        ClickAt(clk[1], clk[2])
+                        if i < #s.clicks then task.wait(CLICK_DELAY) end
+                    end
+                    task.wait(1)
+                    State.Killed = 0
+                end
             end
 
             Log("полёт к квестодателю")
@@ -630,17 +667,37 @@ local function StartSelected()
             for i, clk in ipairs(s.clicks) do
                 if not State.Running then break end
                 if not Alive() then break end
-                Log("клик "..i.."/"..#s.clicks.." ("..clk[1]..","..clk[2]..")")
+                Log("клик "..i.."/"..#s.clicks)
                 ClickAt(clk[1], clk[2])
                 if i < #s.clicks then task.wait(CLICK_DELAY) end
             end
             task.wait(1)
+
             State.Killed = 0
-            while State.Killed < s.killTarget and State.Running and State.ActiveSection == s do
+            -- Используем UI прогресс как счётчик, а не свой счётчик
+            while State.Running and State.ActiveSection == s do
                 if not Alive() then break end
-                Log("убиваю "..(State.Killed+1).."/"..s.killTarget.." ("..State.WeaponName..")")
-                if KillOneMob(s) then State.Killed = State.Killed + 1
-                else Log("жду моба..."); task.wait(1) end
+
+                -- Читаем текущий прогресс из UI
+                local uiCur, uiReq = ReadQuestProgress()
+                if uiCur then
+                    State.QuestProgress = uiCur
+                    if uiReq then State.QuestRequired = uiReq end
+                    State.Killed = uiCur
+                    if uiCur >= State.QuestRequired and State.QuestRequired > 0 then
+                        Log("✅ квест выполнен ("..uiCur.."/"..State.QuestRequired..")")
+                        break
+                    end
+                end
+
+                Log("прогресс "..State.QuestProgress.."/"..State.QuestRequired.." ("..State.WeaponName..")")
+                if KillOneMob(s) then
+                    -- После убийства подождём немного чтобы UI обновился
+                    task.wait(0.8)
+                else
+                    Log("жду моба...")
+                    task.wait(1)
+                end
                 task.wait(0.3)
             end
             task.wait(0.5)
@@ -674,7 +731,7 @@ local function CreateUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -50, 1, 0); title.Position = UDim2.new(0, 15, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "⚡  БИН — АВТО КВЕСТ v39"
+    title.Text = "⚡  БИН — АВТО КВЕСТ v40"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 15
     title.TextXAlignment = Enum.TextXAlignment.Left
@@ -1061,7 +1118,7 @@ local function CreateUI()
     task.spawn(function()
         while gui.Parent do
             if State.Running and State.ActiveSection then
-                status.Text = "⚔️  "..State.ActiveSection.name.." ("..State.WeaponName..") — "..State.Killed.."/"..State.ActiveSection.killTarget
+                status.Text = "⚔️  "..State.ActiveSection.name.." — "..State.QuestProgress.."/"..State.QuestRequired
                 status.TextColor3 = Color3.fromRGB(180, 255, 180)
             elseif State.FlyActive then
                 status.Text = "✈️ Свободный полёт активен"
@@ -1098,8 +1155,8 @@ end
 CreateUI()
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "⚡ БИН v39",
-        Text = "Высота 18 + хитбокс x4 (320)",
+        Title = "⚡ БИН v40",
+        Text = "Читает прогресс из квеста (4/8)",
         Duration = 4,
     })
 end)

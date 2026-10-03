@@ -1,4 +1,4 @@
--- Bin's Blox Fruits Hub v14 — FIXED FLY + COMBAT DROP
+-- Bin's Blox Fruits Hub v15 — CLEAN HITBOX
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
@@ -65,54 +65,47 @@ local state = {
     attackSpeed=0.35, killAura=false, killAuraRange=45, hoverHeight=35,
     strikeHeight=8,
     selectedTP="Pirate Island", espNPCs=false, espPlayers=false,
-    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=60, lockCamera=true,
+    autoChest=false, autoFruit=false, fatHitbox=true, hitboxSize=15, lockCamera=true,
     autoFish=false, selectedFruit="Dragon",
     fly=false, flySpeed=120, combatDrop=true,
 }
 
 -- ============================================================
--- FAT HITBOX — enlarge HRP + all body parts, set CanQuery
+-- ХИТБОКС: только HRP становится кубом, всё остальное не трогаем
 -- ============================================================
-local origData = setmetatable({}, {__mode="k"})
+local origHRP = setmetatable({}, {__mode="k"})
+
 local function enlargeHitbox(npc)
     if not state.fatHitbox or not npc then return end
-    local s = state.hitboxSize
-    for _, p in ipairs(npc:GetDescendants()) do
-        if p:IsA("BasePart") then
-            if not origData[p] then
-                origData[p] = {size = p.Size, canq = p.CanQuery, cant = p.CanTouch, coll = p.CanCollide, trans = p.Transparency}
-            end
-            pcall(function()
-                if p.Name == "HumanoidRootPart" then
-                    p.Size = Vector3.new(s, s, s)
-                else
-                    p.Size = p.Size * 2
-                end
-                p.CanQuery = true
-                p.CanTouch = true
-                p.CanCollide = false
-                p.Massless = true
-                p.Transparency = math.max(p.Transparency, 0.5)
-            end)
-        end
+    local hrp = npc:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    if not origHRP[hrp] then
+        origHRP[hrp] = {
+            size = hrp.Size,
+            trans = hrp.Transparency,
+            coll = hrp.CanCollide,
+        }
     end
+    local s = state.hitboxSize
+    pcall(function()
+        hrp.Size = Vector3.new(s, s, s)
+        hrp.Transparency = 1 -- невидимый, не урод
+        hrp.CanCollide = false
+    end)
 end
 
 local function restoreHitbox(npc)
     if not npc then return end
-    for _, p in ipairs(npc:GetDescendants()) do
-        local o = origData[p]
-        if o then
-            pcall(function()
-                p.Size = o.size
-                p.CanQuery = o.canq
-                p.CanTouch = o.cant
-                p.CanCollide = o.coll
-                p.Transparency = o.trans
-                p.Massless = false
-            end)
-            origData[p] = nil
-        end
+    local hrp = npc:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local o = origHRP[hrp]
+    if o then
+        pcall(function()
+            hrp.Size = o.size
+            hrp.Transparency = o.trans
+            hrp.CanCollide = o.coll
+        end)
+        origHRP[hrp] = nil
     end
 end
 
@@ -132,7 +125,7 @@ end
 
 RunService.Heartbeat:Connect(function()
     if not (hoverActive and hoverTarget and hoverTarget.Parent) then return end
-    if state.fly then return end -- fly перебивает hover
+    if state.fly then return end
     local r = getRoot()
     local hrp = hoverTarget:FindFirstChild("HumanoidRootPart")
     local hum = hoverTarget:FindFirstChild("Humanoid")
@@ -153,7 +146,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
--- FLY — RenderStepped + CFrame (100% reliable)
+-- FLY
 -- ============================================================
 local flyConn = nil
 local function startFly()
@@ -174,9 +167,7 @@ local function startFly()
         if UserInput:IsKeyDown(Enum.KeyCode.D) then move = move + cam.CFrame.RightVector end
         if UserInput:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
         if UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
-        if move.Magnitude > 0 then
-            move = move.Unit * state.flySpeed * dt
-        end
+        if move.Magnitude > 0 then move = move.Unit * state.flySpeed * dt end
         pcall(function()
             rr.CFrame = rr.CFrame + move
             rr.Velocity = Vector3.new(0,0,0)
@@ -330,9 +321,6 @@ local function nearest(tag)
     return best
 end
 
--- ============================================================
--- ATTACK — с Combat Drop если high hover
--- ============================================================
 local function attack(npc)
     if not npc or not npc.Parent then return end
     local hrp = npc:FindFirstChild("HumanoidRootPart")
@@ -350,9 +338,9 @@ local function attack(npc)
     end
     if tool and humanoid then pcall(function() humanoid:EquipTool(tool) end) end
 
-    -- Combat Drop: временно ныряем на strikeHeight
     local r = getRoot()
     if state.combatDrop and r and state.hoverHeight > state.strikeHeight + 3 then
+        dropping = true
         local target = hrp.Position
         local divePos = Vector3.new(target.X, target.Y + state.strikeHeight, target.Z)
         pcall(function() r.CFrame = CFrame.lookAt(divePos, target) end)
@@ -384,6 +372,8 @@ local function attack(npc)
             end)
         end
     end
+
+    dropping = false
 end
 
 local PRIO = {
@@ -424,7 +414,6 @@ task.spawn(function()
     end
 end)
 
--- AUTO FISH
 local function findRod()
     if not character then return nil end
     local ok, ch = pcall(function() return character:GetChildren() end)
@@ -462,7 +451,6 @@ task.spawn(function()
     end
 end)
 
--- AUTO CHEST / FRUIT
 task.spawn(function()
     while task.wait(0.6) do
         if state.autoChest then
@@ -491,7 +479,6 @@ task.spawn(function()
     end
 end)
 
--- ESP
 local espFolder = Instance.new("Folder"); espFolder.Name="BinESP"; espFolder.Parent=workspace
 local function mkESP(ad,col,txt)
     local bb=Instance.new("BillboardGui")
@@ -556,7 +543,6 @@ task.spawn(function()
     end
 end)
 
--- UI
 local C = {
     bg=Color3.fromRGB(12,12,20), bg2=Color3.fromRGB(20,20,32),
     surface=Color3.fromRGB(28,28,44), surface2=Color3.fromRGB(40,40,60),
@@ -567,7 +553,7 @@ local C = {
     sub=Color3.fromRGB(155,155,190), dim=Color3.fromRGB(95,95,125),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinBloxFruitsV14"; sg.ResetOnSpawn=false
+sg.Name="BinBloxFruitsV15"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=playerGui
 local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -651,7 +637,7 @@ tl.TextColor3=C.text; tl.Font=Enum.Font.GothamBold; tl.TextSize=15
 tl.TextXAlignment=Enum.TextXAlignment.Left; tl.Parent=tb
 local sl=Instance.new("TextLabel")
 sl.Size=UDim2.new(1,-140,0,16); sl.Position=UDim2.new(0,64,0,30)
-sl.BackgroundTransparency=1; sl.Text="v14 · fixed fly + combat drop"
+sl.BackgroundTransparency=1; sl.Text="v15 · clean hitbox"
 sl.TextColor3=C.sub; sl.Font=Enum.Font.Gotham; sl.TextSize=11
 sl.TextXAlignment=Enum.TextXAlignment.Left; sl.Parent=tb
 local cb=Instance.new("TextButton")
@@ -835,7 +821,6 @@ local function input(parent,ph,cb2,bt)
     end)
 end
 
--- FARM
 section(pages.farm,"FARMING")
 toggle(pages.farm,"Auto Farm Level","Any NPC",
     function() return state.autoFarmLevel end, function(v) state.autoFarmLevel=v end)
@@ -851,13 +836,13 @@ slider(pages.farm,"Attack Speed",0.1,2.0,0.05,
     function() return state.attackSpeed end, function(v) state.attackSpeed=v end,"s")
 slider(pages.farm,"Hover Height",5,80,1,
     function() return state.hoverHeight end, function(v) state.hoverHeight=v end," studs")
-slider(pages.farm,"Strike Height (attack)",3,15,1,
+slider(pages.farm,"Strike Height",3,15,1,
     function() return state.strikeHeight end, function(v) state.strikeHeight=v end," studs")
 toggle(pages.farm,"Combat Drop","Dive to strike height when attacking",
     function() return state.combatDrop end, function(v) state.combatDrop=v end)
-slider(pages.farm,"Hitbox Size",10,150,1,
+slider(pages.farm,"Hitbox Size",5,30,1,
     function() return state.hitboxSize end, function(v) state.hitboxSize=v end," studs")
-toggle(pages.farm,"Fat Hitbox","Enlarge NPC parts",
+toggle(pages.farm,"Fat Hitbox","Cube on NPC HRP (invisible)",
     function() return state.fatHitbox end, function(v) state.fatHitbox=v end)
 toggle(pages.farm,"Lock Camera","Force cam on target",
     function() return state.lockCamera end, function(v) state.lockCamera=v end)
@@ -920,7 +905,6 @@ task.spawn(function()
     end
 end)
 
--- TP
 section(pages.tp,"SEARCH")
 local sf=Instance.new("Frame")
 sf.Size=UDim2.new(1,0,0,38); sf.BackgroundColor3=C.surface
@@ -972,7 +956,6 @@ local function rebuildLoc(f)
 end
 rebuildLoc("")
 sb:GetPropertyChangedSignal("Text"):Connect(function() rebuildLoc(sb.Text) end)
-
 section(pages.tp,"ACTIONS")
 action(pages.tp,"✨  Teleport Now",function()
     local l=findLoc(state.selectedTP)
@@ -1095,7 +1078,7 @@ crn(ic,10); strk(ic,C.surface3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-20,1,-16); it.Position=UDim2.new(0,16,0,8)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v14\nfixed fly + combat drop\n\nmade by Bin & Steve\nnya~"
+it.Text="Bin's Blox Fruits Hub v15\nclean hitbox\n\nmade by Bin & Steve\nnya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=12
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top; it.Parent=ic
@@ -1150,5 +1133,5 @@ do
     ob.InputBegan:Connect(beg); ob.InputEnded:Connect(en)
 end
 
-notify("Bin's Hub v14","Loaded · combat drop + working fly",C.accent)
-print("[Bin's Hub v14] loaded.")
+notify("Bin's Hub v15","Loaded · clean hitbox",C.accent)
+print("[Bin's Hub v15] loaded.")

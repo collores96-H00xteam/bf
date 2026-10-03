@@ -1,3 +1,4 @@
+--- v24 beta
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local UIS=game:GetService("UserInputService")
@@ -5,8 +6,8 @@ local TS=game:GetService("TweenService")
 local RS=game:GetService("ReplicatedStorage")
 local VI=nil
 pcall(function() VI=game:GetService("VirtualInputManager") end)
-local player=Players.LocalPlayer
-local pg=player:WaitForChild("PlayerGui",30)
+local plr=Players.LocalPlayer
+local pg=plr:WaitForChild("PlayerGui",30)
 local cam=workspace.CurrentCamera
 local char,root,hum
 local function bind(c)
@@ -15,35 +16,54 @@ local function bind(c)
     root=c:WaitForChild("HumanoidRootPart",15)
     hum=c:WaitForChild("Humanoid",15)
 end
-if player.Character then bind(player.Character) end
-player.CharacterAdded:Connect(bind)
-local ww=0
-while (not char or not root or not hum) and ww<60 do
-    task.wait(0.5); ww=ww+0.5
-    if player.Character then bind(player.Character) end
+if plr.Character then bind(plr.Character) end
+plr.CharacterAdded:Connect(bind)
+local wt=0
+while (not char or not root or not hum) and wt<60 do
+    task.wait(0.5); wt=wt+0.5
+    if plr.Character then bind(plr.Character) end
 end
 local function gr()
     if not char or not char.Parent then
-        if player.Character and player.Character.Parent then bind(player.Character) end
+        if plr.Character and plr.Character.Parent then bind(plr.Character) end
     end
     if not root or not root.Parent then return nil end
     return root
 end
-local function gy(x,z,y)
+local function getY(x,z,from)
     local ok,res=pcall(function()
         local rp=RaycastParams.new()
         rp.FilterType=Enum.RaycastFilterType.Exclude
         rp.FilterDescendantsInstances=char and {char} or {}
         rp.IgnoreWater=false
-        return workspace:Raycast(Vector3.new(x,y or 500,z),Vector3.new(0,-1000,0),rp)
+        return workspace:Raycast(Vector3.new(x,from or 500,z),Vector3.new(0,-2000,0),rp)
     end)
     if ok and res then return res.Position.Y end
     return nil
 end
+-- ТП через MoveTo (не блокируется) + CFrame fallback
 local function tp(pos)
     local r=gr(); if not r then return false end
-    local Y=gy(pos.X,pos.Z,pos.Y+500) or pos.Y
-    pcall(function() r.CFrame=CFrame.new(pos.X,Y+3.5,pos.Z) end)
+    local y=getY(pos.X,pos.Z,pos.Y+500) or pos.Y
+    local target=Vector3.new(pos.X,y+3.5,pos.Z)
+    -- метод 1: MoveTo через Humanoid
+    if hum then
+        pcall(function() hum:MoveTo(target) end)
+    end
+    -- метод 2: прямая установка CFrame (2 раза для надёжности)
+    pcall(function() r.CFrame=CFrame.new(target) end)
+    task.wait(0.05)
+    pcall(function() r.CFrame=CFrame.new(target) end)
+    task.wait(0.05)
+    -- проверяем долетели ли
+    if (r.Position-target).Magnitude > 100 then
+        -- попытка 3: разбить на шаги
+        for i=1,5 do
+            pcall(function() r.CFrame=CFrame.new(target) end)
+            task.wait(0.05)
+            if (r.Position-target).Magnitude < 20 then break end
+        end
+    end
     return true
 end
 local function tpo(o)
@@ -57,9 +77,7 @@ local function getRem()
     return r and (r:FindFirstChild("CommF_") or r:FindFirstChild("CommE_")) or nil
 end
 
--- ============================================================
 -- STATE
--- ============================================================
 local S={
     farmLevel=false,farmPirates=false,farmMarines=false,farmBosses=false,
     speed=0.25, hover=6, killAura=false, auraRange=45,
@@ -165,41 +183,26 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- AUTO STAT — с проверкой поинтов
--- ============================================================
-local function getStatPoints()
-    local ok, pts = pcall(function()
-        local d = player:FindFirstChild("Data")
-        if d then
-            local s = d:FindFirstChild("Stats")
-            if s then
-                local p = s:FindFirstChild("Points")
-                if p then return p.Value end
-            end
-        end
-        return nil
-    end)
-    return ok and pts or nil
+local function getPoints()
+    local d=plr:FindFirstChild("Data")
+    if not d then return 0 end
+    local s=d:FindFirstChild("Stats")
+    if not s then return 0 end
+    local p=s:FindFirstChild("Points")
+    if not p then return 0 end
+    return p.Value or 0
 end
-
-local lastStatWarn = 0
 task.spawn(function()
     while task.wait(1.5) do
         if S.autoStat then
-            local pts = getStatPoints()
-            if pts and pts > 0 then
+            local pts=getPoints()
+            if pts>0 then
                 local r=getRem()
                 if r then
-                    for i=1, math.min(pts, 5) do
+                    for i=1,math.min(pts,10) do
                         pcall(function() r:InvokeServer("AddPoint",S.statName,1) end)
                     end
-                end
-            else
-                -- нет поинтов — предупреждаем раз в 10 сек
-                if tick() - lastStatWarn > 10 then
-                    lastStatWarn = tick()
-                    -- тихо, не спамим
                 end
             end
         end
@@ -221,65 +224,80 @@ task.spawn(function()
     end
 end)
 
--- CITIES
+-- ============================================================
+-- ТОЧНЫЕ КООРДИНАТЫ
+-- ============================================================
 local CITIES={
-    {n="Bandit Camp",p=Vector3.new(-1110,20,3200),s=1},
-    {n="Pirate Village",p=Vector3.new(-1200,20,3400),s=1},
-    {n="Marine Fort",p=Vector3.new(-2800,20,4300),s=1},
-    {n="Jungle",p=Vector3.new(-1600,20,200),s=1},
-    {n="Marine Ford",p=Vector3.new(-2760,20,4320),s=1},
-    {n="Fountain City",p=Vector3.new(-1250,20,3200),s=1},
-    {n="Pirate Island",p=Vector3.new(1000,20,1200),s=1},
+    -- Sea 1
+    {n="Bandit Camp",p=Vector3.new(-1160,20,3146),s=1},
+    {n="Pirate Village",p=Vector3.new(-1210,20,3400),s=1},
+    {n="Marine Fort",p=Vector3.new(-2770,20,4326),s=1},
+    {n="Jungle",p=Vector3.new(-1620,20,220),s=1},
+    {n="Marine Ford",p=Vector3.new(-2755,20,4315),s=1},
+    {n="Fountain City",p=Vector3.new(-1245,20,3200),s=1},
+    {n="Pirate Island",p=Vector3.new(990,20,1210),s=1},
     {n="First Sea Port",p=Vector3.new(400,20,400),s=1},
-    {n="Colosseum",p=Vector3.new(-1500,20,200),s=1},
-    {n="Desert",p=Vector3.new(1000,20,4500),s=1},
-    {n="Snow Island",p=Vector3.new(1250,20,-1500),s=1},
+    {n="Colosseum",p=Vector3.new(-1480,20,215),s=1},
+    {n="Desert",p=Vector3.new(1050,20,4480),s=1},
+    {n="Snow Island",p=Vector3.new(1240,20,-1510),s=1},
+    {n="Snow Mountain",p=Vector3.new(-1480,20,-5470),s=1},
     {n="Skylands",p=Vector3.new(-500,800,-1500),s=1},
-    {n="Prison",p=Vector3.new(5000,20,800),s=1},
-    {n="Kingdom of Rose",p=Vector3.new(-400,20,6000),s=2},
-    {n="Green Zone",p=Vector3.new(-3500,20,-4500),s=2},
-    {n="Graveyard",p=Vector3.new(-5500,20,-3000),s=2},
-    {n="Snow Mountain",p=Vector3.new(-1500,20,-5500),s=2},
-    {n="Cursed Ship",p=Vector3.new(9000,20,5000),s=2},
-    {n="Ice Castle",p=Vector3.new(-6000,20,-6000),s=2},
-    {n="Forgotten Island",p=Vector3.new(-3000,20,-8000),s=2},
-    {n="Port Town",p=Vector3.new(-500,20,-10000),s=3},
-    {n="Hydra Island",p=Vector3.new(5000,20,-9000),s=3},
-    {n="Great Tree",p=Vector3.new(-3000,20,-12000),s=3},
-    {n="Floating Turtle",p=Vector3.new(-9000,20,-10000),s=3},
-    {n="Haunted Castle",p=Vector3.new(3000,20,-12000),s=3},
-    {n="Castle on the Sea",p=Vector3.new(-6000,20,-14000),s=3},
-    {n="Sea of Treats",p=Vector3.new(5000,20,-15000),s=3},
+    {n="Prison",p=Vector3.new(4990,20,810),s=1},
+    {n="Graveyard",p=Vector3.new(-5420,20,-3510),s=1},
+    {n="Cursed Ship",p=Vector3.new(9010,20,5010),s=1},
+    -- Sea 2
+    {n="Kingdom of Rose",p=Vector3.new(-390,20,5990),s=2},
+    {n="Green Zone",p=Vector3.new(-3480,20,-4480),s=2},
+    {n="Snow Mountain Sea2",p=Vector3.new(-1510,20,-5510),s=2},
+    {n="Ice Castle",p=Vector3.new(-5990,20,-5990),s=2},
+    {n="Forgotten Island",p=Vector3.new(-3010,20,-8010),s=2},
+    -- Sea 3
+    {n="Port Town",p=Vector3.new(-490,20,-9990),s=3},
+    {n="Hydra Island",p=Vector3.new(5010,20,-9010),s=3},
+    {n="Great Tree",p=Vector3.new(-3010,20,-12010),s=3},
+    {n="Floating Turtle",p=Vector3.new(-9010,20,-10010),s=3},
+    {n="Haunted Castle",p=Vector3.new(3010,20,-12010),s=3},
+    {n="Castle on the Sea",p=Vector3.new(-6010,20,-14010),s=3},
+    {n="Sea of Treats",p=Vector3.new(5010,20,-15010),s=3},
 }
+
+-- БОССЫ — точные координаты из Blox Fruits
 local BOSSES={
-    {n="Gorilla King",lv=100,p=Vector3.new(-1170,20,3200)},
-    {n="Bobby",lv=150,p=Vector3.new(-1200,20,3400)},
-    {n="Yeti",lv=200,p=Vector3.new(1300,20,-1600)},
-    {n="Mob Leader",lv=300,p=Vector3.new(-1500,20,300)},
-    {n="Vice Admiral",lv=375,p=Vector3.new(-2800,20,4300)},
-    {n="Saber Expert",lv=500,p=Vector3.new(-1500,20,200)},
-    {n="Cyborg",lv=650,p=Vector3.new(-2800,20,4320)},
-    {n="Diamond",lv=750,p=Vector3.new(-400,20,6000)},
-    {n="Jeremy",lv=850,p=Vector3.new(-3600,20,-4500)},
-    {n="Smoke Admiral",lv=1000,p=Vector3.new(-6000,20,-6000)},
-    {n="Yellow Beard",lv=1100,p=Vector3.new(-500,20,-10000)},
-    {n="Cursed Captain",lv=1250,p=Vector3.new(3000,20,-12000)},
-    {n="Soul Reaper",lv=1400,p=Vector3.new(-3000,20,-12000)},
-    {n="Cake Queen",lv=1700,p=Vector3.new(5000,20,-15000)},
-    {n="Dough King",lv=2000,p=Vector3.new(-9000,20,-10000)},
+    {n="Gorilla King",lv=100,p=Vector3.new(-1160,20,2900)},  -- Jungle
+    {n="Bobby",lv=150,p=Vector3.new(-1150,20,3260)},         -- Pirate Village
+    {n="Yeti",lv=200,p=Vector3.new(1300,20,-1600)},          -- Snow Island
+    {n="Mob Leader",lv=300,p=Vector3.new(-2760,20,4300)},    -- Marine Fort / Prison
+    {n="Vice Admiral",lv=375,p=Vector3.new(-2780,20,4320)},  -- Prison
+    {n="Saber Expert",lv=500,p=Vector3.new(-1470,20,220)},   -- Colosseum cave
+    {n="Cyborg",lv=650,p=Vector3.new(4990,20,810)},          -- Prison
+    {n="Diamond",lv=750,p=Vector3.new(-400,20,6000)},        -- Kingdom of Rose
+    {n="Jeremy",lv=850,p=Vector3.new(-3480,20,-4480)},       -- Green Zone
+    {n="Smoke Admiral",lv=1000,p=Vector3.new(-5990,20,-5990)}, -- Ice Castle
+    {n="Yellow Beard",lv=1100,p=Vector3.new(-490,20,-9990)}, -- Port Town
+    {n="Cursed Captain",lv=1250,p=Vector3.new(3010,20,-12010)}, -- Haunted Castle
+    {n="Soul Reaper",lv=1400,p=Vector3.new(-3010,20,-12010)},   -- Great Tree
+    {n="rip_indra True",lv=1500,p=Vector3.new(5010,20,-9010)},  -- Hydra Island
+    {n="Cake Queen",lv=1700,p=Vector3.new(5010,20,-15010)},     -- Sea of Treats
+    {n="Dough King",lv=2000,p=Vector3.new(-9010,20,-10010)},    -- Floating Turtle
 }
+
+-- КВЕСТЫ — точные координаты квестодателей
 local QUESTS={
-    {n="Bandit",lv=1,p=Vector3.new(-1143,20,3140),npc="Bandit"},
-    {n="Monkey",lv=15,p=Vector3.new(-1594,20,200),npc="Monkey"},
-    {n="Blade Master",lv=25,p=Vector3.new(-1449,20,127),npc="Blade Master"},
+    {n="Bandit",lv=1,p=Vector3.new(-1160,20,3146),npc="Bandit"},
+    {n="Monkey",lv=15,p=Vector3.new(-1600,20,200),npc="Monkey"},
+    {n="Blade Master",lv=25,p=Vector3.new(-1450,20,130),npc="Blade Master"},
     {n="Brute",lv=40,p=Vector3.new(-1140,20,1520),npc="Brute"},
     {n="Pirate",lv=60,p=Vector3.new(-1200,20,3400),npc="Pirate"},
-    {n="Marine",lv=90,p=Vector3.new(-2800,20,4300),npc="Marine"},
+    {n="Marine",lv=90,p=Vector3.new(-2780,20,4320),npc="Marine"},
     {n="Snow Bandit",lv=120,p=Vector3.new(1250,20,-1500),npc="Snow Bandit"},
+    {n="Snowman",lv=140,p=Vector3.new(1300,20,-1600),npc="Snowman"},
+    {n="Frost Brigand",lv=160,p=Vector3.new(1400,20,-1400),npc="Frost Brigand"},
     {n="Sky Bandit",lv=180,p=Vector3.new(-500,800,-1500),npc="Sky Bandit"},
-    {n="Raider",lv=375,p=Vector3.new(-400,20,6000),npc="Raider"},
-    {n="Mercenary",lv=450,p=Vector3.new(-3600,20,-4500),npc="Mercenary"},
-    {n="Zombie",lv=550,p=Vector3.new(-5500,20,-3000),npc="Zombie"},
+    {n="Raider",lv=375,p=Vector3.new(-390,20,6000),npc="Raider"},
+    {n="Mercenary",lv=450,p=Vector3.new(-3480,20,-4480),npc="Mercenary"},
+    {n="Zombie",lv=550,p=Vector3.new(-5420,20,-3510),npc="Zombie"},
+    {n="Pirate Captain",lv=1000,p=Vector3.new(-490,20,-9990),npc="Pirate Captain"},
+    {n="Hydra",lv=1100,p=Vector3.new(5010,20,-9010),npc="Hydra"},
 }
 local function startQ(npc,lv)
     local r=getRem()
@@ -287,7 +305,7 @@ local function startQ(npc,lv)
     return pcall(function() r:InvokeServer("StartQuest",npc,lv) end)
 end
 
--- NPC cache
+-- NPC CACHE
 local cache={}
 local KW={
     boss={"Boss","Lord","King","Queen","Admiral","Warden","Diamond","Cyborg"},
@@ -409,7 +427,7 @@ task.spawn(function()
                 if q.n==S.questName then
                     local r=gr()
                     if r then
-                        if (r.Position-q.p).Magnitude>30 then tp(q.p); task.wait(1) end
+                        if (r.Position-q.p).Magnitude>30 then tp(q.p); task.wait(1.2) end
                         startQ(q.npc,q.lv)
                         task.wait(0.5)
                     end
@@ -420,28 +438,25 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- CHESTS — прямое сканирование Enemies + workspace
--- ============================================================
+-- CHESTS — 2 прохода сканирования
 local chests={}
 local function cc(o)
     pcall(function()
         if not (o:IsA("Model") or o:IsA("BasePart")) then return end
         local n=o.Name:lower()
-        -- Blox Fruits: Chest, CommonChest, RareChest, LegendaryChest, MythicalChest, ChestRandom
         if n:find("chest") or n:find("crate") or n:find("barrel") or n:find("treasure") then
             chests[o]=true
         end
     end)
 end
-pcall(function()
-    -- сканируем Enemies отдельно
+local function fullScan()
     local ef=workspace:FindFirstChild("Enemies")
     if ef then
         for _,o in ipairs(ef:GetDescendants()) do cc(o) end
     end
     for _,o in ipairs(workspace:GetDescendants()) do cc(o) end
-end)
+end
+pcall(fullScan)
 workspace.DescendantAdded:Connect(function(o)
     if o:IsA("Model") or o:IsA("BasePart") then cc(o) end
 end)
@@ -450,25 +465,19 @@ task.spawn(function()
         for o in pairs(chests) do if not o.Parent then chests[o]=nil end end
     end
 end)
--- резервное сканирование если кэш пуст
-local function rescanChests()
-    local ef=workspace:FindFirstChild("Enemies")
-    if ef then
-        for _,o in ipairs(ef:GetChildren()) do
-            if o.Name:lower():find("chest") then cc(o) end
-        end
+-- если кэш пуст — каждые 3 сек пересканируем
+task.spawn(function()
+    while task.wait(3) do
+        local cnt=0
+        for _ in pairs(chests) do cnt=cnt+1; if cnt>=1 then break end end
+        if cnt==0 then pcall(fullScan) end
     end
-end
+end)
 task.spawn(function()
     while task.wait(0.4) do
         if S.autoChest then
             local r=gr()
             if r then
-                -- если кэш пуст — обновим
-                local cnt=0
-                for _ in pairs(chests) do cnt=cnt+1; if cnt>0 then break end end
-                if cnt==0 then rescanChests() end
-
                 local mp=r.Position
                 local best,bd=nil,S.chestRange
                 for o in pairs(chests) do
@@ -478,10 +487,7 @@ task.spawn(function()
                         if d<bd then bd=d; best=p end
                     end
                 end
-                if best then
-                    tp(best.Position)
-                    task.wait(0.15)
-                end
+                if best then tp(best.Position); task.wait(0.2) end
             end
         end
         if S.autoFruit then
@@ -492,7 +498,6 @@ task.spawn(function()
 end)
 
 -- FRUITS
-local FRUITS={"Dragon","Leopard","Kitsune","Dough","Venom","Shadow","Control","Spirit","Mammoth","T-Rex","Gas","Portal","Buddha","Phoenix","Gravity","Rumble","Magma","Ice","Light","Dark","Rubber","Sand","Diamond","Barrier","Door","Chop","Spring","Bomb","Spike","Flame","Falcon","Blade","Ghost","Rocket","Spin","Smoke","Revive","Love","Spider","Sound","Creation","Pain","Blizzard"}
 local function findFruit(name)
     if not name or name=="" then return nil end
     local k=name:lower()
@@ -591,7 +596,7 @@ task.spawn(function()
         if S.espPlayer then
             local seen={}
             for _,pl in ipairs(Players:GetPlayers()) do
-                if pl~=player and pl.Character then
+                if pl~=plr and pl.Character then
                     local h=pl.Character:FindFirstChild("HumanoidRootPart")
                     if h then
                         seen[pl]=true
@@ -609,9 +614,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- UI — ТАБЫ СЛЕВА ВЕРТИКАЛЬНО
--- ============================================================
+-- UI
 local C={
     bg=Color3.fromRGB(10,14,26), bg2=Color3.fromRGB(16,22,40),
     surf=Color3.fromRGB(24,32,56), surf2=Color3.fromRGB(38,48,80),
@@ -622,7 +625,7 @@ local C={
     sub=Color3.fromRGB(140,160,200), dim=Color3.fromRGB(70,85,130),
 }
 local sg=Instance.new("ScreenGui")
-sg.Name="BinHubV23"; sg.ResetOnSpawn=false
+sg.Name="BinHubV24"; sg.ResetOnSpawn=false
 sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 sg.Parent=pg
 local function tw(o,t,p) TS:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
@@ -631,8 +634,6 @@ local function strk(p,c,t,tr)
     local s=Instance.new("UIStroke"); s.Color=c; s.Thickness=t or 1
     s.Transparency=tr or 0; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; s.Parent=p; return s
 end
-
--- NOTIF
 local nh=Instance.new("Frame")
 nh.Size=UDim2.new(0,280,1,-40); nh.Position=UDim2.new(1,-300,0,20)
 nh.BackgroundTransparency=1; nh.Parent=sg
@@ -692,7 +693,7 @@ kT.TextColor3=C.txt; kT.Font=Enum.Font.GothamBold
 kT.TextSize=18; kT.ZIndex=52; kT.Parent=kg
 local kS=Instance.new("TextLabel")
 kS.Size=UDim2.new(1,0,0,18); kS.Position=UDim2.new(0,0,0,114)
-kS.BackgroundTransparency=1; kS.Text="v23 · enter key"
+kS.BackgroundTransparency=1; kS.Text="v24 · enter key"
 kS.TextColor3=C.sub; kS.Font=Enum.Font.Gotham
 kS.TextSize=11; kS.ZIndex=52; kS.Parent=kg
 local kBox=Instance.new("TextBox")
@@ -716,7 +717,7 @@ kBtn.MouseButton1Click:Connect(function()
         tw(kg,0.4,{Size=UDim2.new(0,150,0,100),Position=UDim2.new(0.5,-75,0.5,-50),BackgroundTransparency=1})
         task.wait(0.4)
         kb:Destroy(); kg:Destroy()
-        notify("✓ Unlocked","Welcome, "..player.Name,C.grn)
+        notify("✓ Unlocked","Welcome, "..plr.Name,C.grn)
     else
         kBox.Text=""
         kBox.PlaceholderText="❌ неверный ключ"
@@ -731,25 +732,19 @@ kBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- MAIN — панель открывается СПРАВА от кнопки
--- ============================================================
-local PANEL_X = 18      -- кнопка слева
-local PANEL_Y = 100     -- от верха
-local PANEL_W = 560
-local PANEL_H = 500
-
--- кнопка ⚡ слева
+-- MAIN
+local PX=18
+local PY=100
+local PW=560
+local PH=500
 local ob=Instance.new("TextButton")
-ob.Size=UDim2.new(0,56,0,56); ob.Position=UDim2.new(0,PANEL_X,0,PANEL_Y)
+ob.Size=UDim2.new(0,56,0,56); ob.Position=UDim2.new(0,PX,0,PY)
 ob.BackgroundColor3=C.surf; ob.Text="⚡"; ob.TextColor3=C.acc
 ob.Font=Enum.Font.GothamBold; ob.TextSize=26
 ob.AutoButtonColor=false; ob.Visible=false; ob.ZIndex=10; ob.Parent=sg
 crn(ob,14); strk(ob,C.acc,2,0.2)
-
--- карточка игрока слева снизу
 local pc=Instance.new("Frame")
-pc.Size=UDim2.new(0,220,0,64); pc.Position=UDim2.new(0,PANEL_X,1,-84)
+pc.Size=UDim2.new(0,220,0,64); pc.Position=UDim2.new(0,PX,1,-84)
 pc.BackgroundColor3=C.surf; pc.BackgroundTransparency=0.1
 pc.BorderSizePixel=0; pc.Visible=false; pc.ZIndex=5; pc.Parent=sg
 crn(pc,14); strk(pc,C.acc,1.5,0.3)
@@ -762,24 +757,23 @@ ai.Size=UDim2.new(1,-4,1,-4); ai.Position=UDim2.new(0,2,0,2)
 ai.BackgroundTransparency=1; ai.ZIndex=7; ai.Parent=af
 crn(ai,10)
 pcall(function()
-    ai.Image=Players:GetUserThumbnailAsync(player.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size100x100)
+    ai.Image=Players:GetUserThumbnailAsync(plr.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size100x100)
 end)
 local pn=Instance.new("TextLabel")
 pn.Size=UDim2.new(1,-70,0,22); pn.Position=UDim2.new(0,66,0,10)
-pn.BackgroundTransparency=1; pn.Text=player.Name
+pn.BackgroundTransparency=1; pn.Text=plr.Name
 pn.TextColor3=C.txt; pn.Font=Enum.Font.GothamBold; pn.TextSize=13
 pn.TextXAlignment=Enum.TextXAlignment.Left
 pn.TextTruncate=Enum.TextTruncate.AtEnd; pn.ZIndex=6; pn.Parent=pc
-local pl=Instance.new("TextLabel")
-pl.Size=UDim2.new(1,-70,0,18); pl.Position=UDim2.new(0,66,0,32)
-pl.BackgroundTransparency=1; pl.Text="Hub v23"
-pl.TextColor3=C.sub; pl.Font=Enum.Font.Gotham; pl.TextSize=10
-pl.TextXAlignment=Enum.TextXAlignment.Left; pl.ZIndex=6; pl.Parent=pc
+local plbl=Instance.new("TextLabel")
+plbl.Size=UDim2.new(1,-70,0,18); plbl.Position=UDim2.new(0,66,0,32)
+plbl.BackgroundTransparency=1; plbl.Text="Hub v24"
+plbl.TextColor3=C.sub; plbl.Font=Enum.Font.Gotham; plbl.TextSize=10
+plbl.TextXAlignment=Enum.TextXAlignment.Left; plbl.ZIndex=6; plbl.Parent=pc
 
--- главная панель — появляется ПРАВЕЕ кнопки
 local main=Instance.new("Frame")
-main.Size=UDim2.new(0,0,0,PANEL_H)
-main.Position=UDim2.new(0,PANEL_X+66,0,PANEL_Y)
+main.Size=UDim2.new(0,0,0,PH)
+main.Position=UDim2.new(0,PX+66,0,PY)
 main.BackgroundColor3=C.bg; main.BorderSizePixel=0
 main.Visible=false; main.Active=true; main.ClipsDescendants=true
 main.ZIndex=4; main.Parent=sg
@@ -791,8 +785,6 @@ mg.Transparency=NumberSequence.new({
     NumberSequenceKeypoint.new(1,0.9),
 })
 mg.Parent=main
-
--- title bar
 local tb=Instance.new("Frame")
 tb.Size=UDim2.new(1,0,0,50); tb.BackgroundColor3=C.surf
 tb.BorderSizePixel=0; tb.ZIndex=5; tb.Parent=main; crn(tb,16)
@@ -818,7 +810,7 @@ ttl.TextColor3=C.txt; ttl.Font=Enum.Font.GothamBold; ttl.TextSize=14
 ttl.TextXAlignment=Enum.TextXAlignment.Left; ttl.ZIndex=6; ttl.Parent=tb
 local stl=Instance.new("TextLabel")
 stl.Size=UDim2.new(1,-120,0,14); stl.Position=UDim2.new(0,54,0,27)
-stl.BackgroundTransparency=1; stl.Text="v23 · "..player.Name
+stl.BackgroundTransparency=1; stl.Text="v24 · "..plr.Name
 stl.TextColor3=C.sub; stl.Font=Enum.Font.Gotham; stl.TextSize=10
 stl.TextXAlignment=Enum.TextXAlignment.Left; stl.ZIndex=6; stl.Parent=tb
 local cbtn=Instance.new("TextButton")
@@ -828,22 +820,17 @@ cbtn.Font=Enum.Font.GothamBold; cbtn.TextSize=13
 cbtn.AutoButtonColor=false; cbtn.ZIndex=6; cbtn.Parent=tb
 crn(cbtn,10)
 
--- ============================================================
--- ВЕРТИКАЛЬНЫЕ ТАБЫ СЛЕВА
--- ============================================================
-local TAB_W = 60
+-- TABS слева вертикально
+local TW=60
 local tabBar=Instance.new("Frame")
-tabBar.Size=UDim2.new(0,TAB_W,1,-60)
-tabBar.Position=UDim2.new(0,0,0,50)
+tabBar.Size=UDim2.new(0,TW,1,-60); tabBar.Position=UDim2.new(0,0,0,50)
 tabBar.BackgroundColor3=C.bg2; tabBar.BorderSizePixel=0
 tabBar.ZIndex=5; tabBar.Parent=main
-
 local pages={}
 local tabs={}
 local TN={"farm","boss","quest","stat","tp","esp","misc"}
 local TL={"⚔","👑","📜","📊","🌀","👁","⚙"}
-local TLABELS={"FARM","BOSS","QUEST","STAT","TP","ESP","MISC"}
-
+local TLb={"FARM","BOSS","QUEST","STAT","TP","ESP","MISC"}
 local pill=Instance.new("Frame")
 pill.Size=UDim2.new(1,-8,0,46); pill.Position=UDim2.new(0,4,0,4)
 pill.BackgroundColor3=C.acc; pill.BorderSizePixel=0
@@ -851,35 +838,28 @@ pill.ZIndex=6; pill.Parent=tabBar; crn(pill,10)
 local pillG=Instance.new("UIGradient")
 pillG.Color=ColorSequence.new(C.acc,C.acc3); pillG.Rotation=45
 pillG.Parent=pill
-
 local function selTab(name)
     for _,n in ipairs(TN) do
-        if tabs[n] then
-            tabs[n].TextColor3 = (n==name) and C.bg or C.sub
-        end
+        if tabs[n] then tabs[n].TextColor3=(n==name) and C.bg or C.sub end
     end
     local idx=1
     for i,n in ipairs(TN) do if n==name then idx=i; break end end
-    tw(pill, 0.25, {Position=UDim2.new(0,4,0,4+(idx-1)*52)})
+    tw(pill,0.25,{Position=UDim2.new(0,4,0,4+(idx-1)*52)})
     for n,p in pairs(pages) do p.Visible=(n==name) end
 end
-
 for i,name in ipairs(TN) do
     local b=Instance.new("TextButton")
     b.Size=UDim2.new(1,-8,0,46); b.Position=UDim2.new(0,4,0,4+(i-1)*52)
     b.BackgroundTransparency=1
-    b.Text=TL[i].."\n"..TLABELS[i]
+    b.Text=TL[i].."\n"..TLb[i]
     b.TextColor3=C.sub; b.Font=Enum.Font.GothamBold
     b.TextSize=10; b.ZIndex=7; b.Parent=tabBar
     b.MouseButton1Click:Connect(function() selTab(name) end)
     tabs[name]=b
 end
-
--- content
-local CONTENT_X = TAB_W + 4
+local CX=TW+4
 local ca=Instance.new("Frame")
-ca.Size=UDim2.new(1, -CONTENT_X - 8, 1, -60)
-ca.Position=UDim2.new(0, CONTENT_X, 0, 54)
+ca.Size=UDim2.new(1,-CX-8,1,-60); ca.Position=UDim2.new(0,CX,0,54)
 ca.BackgroundTransparency=1; ca.ClipsDescendants=true; ca.ZIndex=5; ca.Parent=main
 for _,name in ipairs(TN) do
     local p=Instance.new("ScrollingFrame")
@@ -894,7 +874,6 @@ for _,name in ipairs(TN) do
     pages[name]=p
 end
 selTab("farm")
-
 local ordr=0
 local function no() ordr=ordr+1; return ordr end
 local function sect(parent,title)
@@ -998,7 +977,6 @@ local function act(parent,text,cb,col)
         if not ok then warn("[Bin Hub] "..tostring(err)); notify("Error",tostring(err),C.red) end
     end)
 end
-
 -- FARM
 sect(pages.farm,"FARMING")
 tog(pages.farm,"Auto Level","Any NPC",function() return S.farmLevel end,function(v) S.farmLevel=v end)
@@ -1020,11 +998,10 @@ sect(pages.farm,"AUTO COLLECT")
 tog(pages.farm,"Auto Chest","Smart TP",function() return S.autoChest end,function(v) S.autoChest=v end)
 sld(pages.farm,"Chest Range",100,5000,50,function() return S.chestRange end,function(v) S.chestRange=v end,"")
 tog(pages.farm,"Auto Fruit","TP to selected",function() return S.autoFruit end,function(v) S.autoFruit=v end)
-
 -- BOSS
 sect(pages.boss,"BOSS TELEPORT")
 local bScr=Instance.new("ScrollingFrame")
-bScr.Size=UDim2.new(1,0,0,320); bScr.BackgroundColor3=C.surf
+bScr.Size=UDim2.new(1,0,0,340); bScr.BackgroundColor3=C.surf
 bScr.BorderSizePixel=0; bScr.LayoutOrder=no()
 bScr.ScrollBarThickness=4; bScr.ScrollBarImageColor3=C.red
 bScr.CanvasSize=UDim2.new(0,0,0,0); bScr.AutomaticCanvasSize=Enum.AutomaticSize.Y
@@ -1056,17 +1033,16 @@ act(pages.boss,"👑  TP to Selected Boss",function()
         if b.n==S.selBoss then
             local ok=tp(b.p)
             if ok then notify("Boss","TP: "..b.n,C.red)
-            else notify("Boss","Ошибка ТП",C.red) end
+            else notify("Boss","Ошибка",C.red) end
             break
         end
     end
 end,C.red)
-
 -- QUEST
 sect(pages.quest,"AUTO QUEST")
 tog(pages.quest,"Auto Quest","Loop",function() return S.autoQuest end,function(v) S.autoQuest=v end)
 local qScr=Instance.new("ScrollingFrame")
-qScr.Size=UDim2.new(1,0,0,320); qScr.BackgroundColor3=C.surf
+qScr.Size=UDim2.new(1,0,0,340); qScr.BackgroundColor3=C.surf
 qScr.BorderSizePixel=0; qScr.LayoutOrder=no()
 qScr.ScrollBarThickness=4; qScr.ScrollBarImageColor3=C.acc2
 qScr.CanvasSize=UDim2.new(0,0,0,0); qScr.AutomaticCanvasSize=Enum.AutomaticSize.Y
@@ -1096,7 +1072,7 @@ end
 act(pages.quest,"📜  Start Selected Quest",function()
     for _,q in ipairs(QUESTS) do
         if q.n==S.questName then
-            tp(q.p); task.wait(0.5)
+            tp(q.p); task.wait(0.8)
             local ok=startQ(q.npc,q.lv)
             if ok then notify("Quest","Started: "..q.n,C.grn)
             else notify("Quest","CommF_ не найден",C.red) end
@@ -1104,10 +1080,9 @@ act(pages.quest,"📜  Start Selected Quest",function()
         end
     end
 end,C.acc2)
-
 -- STAT
-sect(pages.stat,"AUTO STAT (level up)")
-tog(pages.stat,"Auto Stat","No spam check",function() return S.autoStat end,function(v) S.autoStat=v end)
+sect(pages.stat,"AUTO STAT")
+tog(pages.stat,"Auto Stat","Only if points>0",function() return S.autoStat end,function(v) S.autoStat=v end)
 local sScr=Instance.new("ScrollingFrame")
 sScr.Size=UDim2.new(1,0,0,200); sScr.BackgroundColor3=C.surf
 sScr.BorderSizePixel=0; sScr.LayoutOrder=no()
@@ -1137,7 +1112,6 @@ for _,sn in ipairs(STATS) do
     statBtns[sn]=b
 end
 tog(pages.stat,"Auto Fruit Mastery","Spam Z X C V",function() return S.autoMastery end,function(v) S.autoMastery=v end)
-
 -- TP
 sect(pages.tp,"CITIES / SEARCH")
 local sf=Instance.new("Frame")
@@ -1151,7 +1125,7 @@ sbx.PlaceholderColor3=C.dim; sbx.TextColor3=C.txt
 sbx.Font=Enum.Font.Gotham; sbx.TextSize=11; sbx.ZIndex=7
 sbx.TextXAlignment=Enum.TextXAlignment.Left; sbx.ClearTextOnFocus=false; sbx.Parent=sf
 local cScr=Instance.new("ScrollingFrame")
-cScr.Size=UDim2.new(1,0,0,280); cScr.BackgroundColor3=C.surf
+cScr.Size=UDim2.new(1,0,0,300); cScr.BackgroundColor3=C.surf
 cScr.BorderSizePixel=0; cScr.LayoutOrder=no()
 cScr.ScrollBarThickness=4; cScr.ScrollBarImageColor3=C.acc
 cScr.CanvasSize=UDim2.new(0,0,0,0); cScr.AutomaticCanvasSize=Enum.AutomaticSize.Y
@@ -1190,7 +1164,7 @@ act(pages.tp,"✨  TP to Selected City",function()
         if l.n==S.selTP then
             local ok=tp(l.p)
             if ok then notify("City","Warped: "..l.n,C.acc)
-            else notify("City","Ошибка ТП",C.red) end
+            else notify("City","Ошибка",C.red) end
             break
         end
     end
@@ -1199,7 +1173,8 @@ act(pages.tp,"🛑  Stop Hover",function()
     if hoverT then rmHB(hoverT) end
     setHover(nil); notify("Hover","Off",C.red)
 end,C.surf2)
-act(pages.tp,"📦  Scan Chests (coords)",function()
+act(pages.tp,"📦  Scan Chests",function()
+    pcall(fullScan)
     local cnt=0
     for o in pairs(chests) do
         local p=o:IsA("Model") and (o:FindFirstChild("Handle") or o.PrimaryPart or o:FindFirstChildWhichIsA("BasePart")) or o
@@ -1212,12 +1187,10 @@ act(pages.tp,"📦  Scan Chests (coords)",function()
     end
     notify("Scan","Всего: "..cnt,C.acc)
 end,C.grn)
-
 -- ESP
 sect(pages.esp,"ESP")
 tog(pages.esp,"ESP NPCs","Boxes",function() return S.espNPC end,function(v) S.espNPC=v end)
 tog(pages.esp,"ESP Players","Boxes",function() return S.espPlayer end,function(v) S.espPlayer=v end)
-
 -- MISC
 sect(pages.misc,"INFO")
 act(pages.misc,"🔄  Refresh NPC Cache",function()
@@ -1230,39 +1203,47 @@ crn(ic,10); strk(ic,C.surf3,1,0.5)
 local it=Instance.new("TextLabel")
 it.Size=UDim2.new(1,-16,1,-12); it.Position=UDim2.new(0,12,0,6)
 it.BackgroundTransparency=1
-it.Text="Bin's Blox Fruits Hub v23\nkey: h00x · hitbox 40\n\nCities: "..#CITIES.." · Bosses: "..#BOSSES.." · Quests: "..#QUESTS.."\nmade by Bin & Steve · nya~"
+it.Text="Bin's Blox Fruits Hub v24\nkey: h00x · hitbox 40\n\nCities: "..#CITIES.." · Bosses: "..#BOSSES.." · Quests: "..#QUESTS.."\nmade by Bin & Steve · nya~"
 it.TextColor3=C.sub; it.Font=Enum.Font.Gotham; it.TextSize=10
 it.TextXAlignment=Enum.TextXAlignment.Left
 it.TextYAlignment=Enum.TextYAlignment.Top
 it.TextWrapped=true; it.ZIndex=7; it.Parent=ic
-
--- toggle
 local isOpen=false
 local function tglW()
     isOpen=not isOpen
     if isOpen then
         main.Visible=true
-        main.Size=UDim2.new(0,0,0,PANEL_H)
-        tw(main,0.3,{Size=UDim2.new(0,PANEL_W,0,PANEL_H)})
+        main.Size=UDim2.new(0,0,0,PH)
+        tw(main,0.3,{Size=UDim2.new(0,PW,0,PH)})
     else
-        tw(main,0.2,{Size=UDim2.new(0,0,0,PANEL_H)})
+        tw(main,0.2,{Size=UDim2.new(0,0,0,PH)})
         task.wait(0.2)
         main.Visible=false
     end
 end
-
 task.spawn(function()
     while not keyOk do task.wait(0.3) end
     ob.Visible=true
     pc.Visible=true
-    pc.Position=UDim2.new(0,PANEL_X,1,-30)
+    pc.Position=UDim2.new(0,PX,1,-30)
     pc.BackgroundTransparency=1
     task.wait(0.1)
-    tw(pc,0.4,{Position=UDim2.new(0,PANEL_X,1,-84),BackgroundTransparency=0.1})
+    tw(pc,0.4,{Position=UDim2.new(0,PX,1,-84),BackgroundTransparency=0.1})
     task.wait(0.4)
     notify("✓ Ready","Нажми ⚡ слева",C.acc)
+    task.spawn(function()
+        local g=Instance.new("TextLabel")
+        g.Size=UDim2.new(0,600,0,80); g.Position=UDim2.new(0.5,-300,0.4,-40)
+        g.BackgroundTransparency=1
+        g.Text="⚡ Добро пожаловать, "..plr.Name.." ⚡"
+        g.TextColor3=C.acc; g.Font=Enum.Font.GothamBold
+        g.TextSize=26; g.TextStrokeTransparency=0
+        g.TextStrokeColor3=C.acc2; g.ZIndex=100; g.Parent=sg
+        task.wait(2)
+        tw(g,0.5,{TextTransparency=1})
+        task.wait(0.5); g:Destroy()
+    end)
 end)
 ob.MouseButton1Click:Connect(function() if keyOk then tglW() end end)
 cbtn.MouseButton1Click:Connect(tglW)
-
-print("[Bin's Hub v23] loaded. key: ///")
+print("[Bin's Hub v24] loaded. key: h00x")

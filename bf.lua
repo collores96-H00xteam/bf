@@ -1,7 +1,7 @@
 --[[
-    BIN'S QUEST — v64
-    • Авто-сундуки: летит на 1296 14 1513
-    • ESP сундуков с координатами над ними
+    BIN'S QUEST — v65
+    • АВТО-МАСШТАБ кликов под любое разрешение экрана
+    • Координаты введены для 1440x900 — теперь работают и на 1920x1080, и на 2560x1440 и т.д.
 ]]
 
 local Players             = game:GetService("Players")
@@ -15,6 +15,10 @@ local TweenService        = game:GetService("TweenService")
 local LP = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
+--// БАЗОВОЕ РАЗРЕШЕНИЕ (под которое писались клики)
+local BASE_WIDTH  = 1440
+local BASE_HEIGHT = 900
+
 local Config = {
     FlySpeed    = 200,
     SafeHeight  = 12,
@@ -24,7 +28,6 @@ local Config = {
     FarmRadius  = 150,
     ChestFarmEnabled = false,
     ChestStartPos    = Vector3.new(1296, 14, 1513),
-    -- ESP мобы
     ESPEnabled  = false,
     ESPMobs     = true,
     ESPBosses   = true,
@@ -34,10 +37,9 @@ local Config = {
     ESPColor    = Color3.fromRGB(180, 60, 60),
     ESPBossColor= Color3.fromRGB(255, 100, 40),
     ESPPlayerColor = Color3.fromRGB(80, 150, 255),
-    -- ESP сундуки
     ChestESPEnabled = false,
     ChestESPColor   = Color3.fromRGB(120, 90, 200),
-    ChestESPNametag = true,      -- показывать ники+координаты
+    ChestESPNametag = true,
 }
 local FLY_ARRIVE    = 4
 local KILL_TIMEOUT  = 20
@@ -137,10 +139,25 @@ local State = {
     ESPHighlights = {}, ESPIndex = {}, ESPLastScan = 0,
     ChestESP = {}, ChestESPIndex = {}, ChestLastScan = 0,
     FarmRunning = false, FarmKilled = 0,
-    ChestRunning = false,
-    ChestCycleCount = 0,
+    ChestRunning = false, ChestCycleCount = 0,
 }
 local UI = {}
+
+--// ============================================================
+-- АВТО-МАСШТАБ КЛИКОВ ПОД РАЗРЕШЕНИЕ ЭКРАНА
+-- ============================================================
+local function GetScreenScale()
+    local vp = Camera and Camera.ViewportSize
+    if not vp then return 1, 1 end
+    local scaleX = vp.X / BASE_WIDTH
+    local scaleY = vp.Y / BASE_HEIGHT
+    return scaleX, scaleY
+end
+
+local function ScaleClick(x, y)
+    local sx, sy = GetScreenScale()
+    return math.floor(x * sx + 0.5), math.floor(y * sy + 0.5)
+end
 
 local function GetRoot() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 local function GetHum() local c = LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
@@ -148,10 +165,11 @@ local function Alive() local h = GetHum(); return h and h.Health > 0 end
 local function Log(t) State.DebugText = t; print("[BIN] "..t) end
 
 local function ClickAt(x, y)
+    local rx, ry = ScaleClick(x, y)
     pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        VirtualInputManager:SendMouseButtonEvent(rx, ry, 0, true, game, 1)
         task.wait(0.05)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+        VirtualInputManager:SendMouseButtonEvent(rx, ry, 0, false, game, 1)
     end)
 end
 
@@ -200,7 +218,7 @@ local function RefreshUI()
     return false
 end
 
---// ============ ESP МОБОВ ============
+--// ESP МОБОВ
 local function IsBoss(model)
     local n = string.lower(model.Name)
     for _, kw in ipairs(BOSS_KEYWORDS) do
@@ -363,7 +381,7 @@ local function UpdateESP()
 end
 RunService.Heartbeat:Connect(UpdateESP)
 
---// ============ ESP СУНДУКОВ ============
+--// ESP СУНДУКОВ
 local function IsChest(obj)
     if not obj then return false end
     for _, n in ipairs(CHEST_NAMES) do
@@ -375,9 +393,7 @@ end
 local function GetChestPart(chest)
     if not chest then return nil end
     if chest:IsA("BasePart") then return chest end
-    if chest:IsA("Model") then
-        return chest:FindFirstChildWhichIsA("BasePart", true)
-    end
+    if chest:IsA("Model") then return chest:FindFirstChildWhichIsA("BasePart", true) end
     return nil
 end
 
@@ -398,45 +414,28 @@ local function CreateChestTag(chest, part, color)
     billboard.AlwaysOnTop = true
     billboard.MaxDistance = Config.ESPDistance
     billboard.Parent = part
-
     local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1, 0, 0, 16)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Text = chest.Name
-    nameLabel.TextColor3 = color
-    nameLabel.Font = Enum.Font.GothamBold
-    nameLabel.TextSize = 12
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.Size = UDim2.new(1, 0, 0, 16); nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = chest.Name; nameLabel.TextColor3 = color
+    nameLabel.Font = Enum.Font.GothamBold; nameLabel.TextSize = 12
+    nameLabel.TextStrokeTransparency = 0; nameLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
     nameLabel.Parent = billboard
-
     local coordLabel = Instance.new("TextLabel")
-    coordLabel.Size = UDim2.new(1, 0, 0, 14)
-    coordLabel.Position = UDim2.new(0, 0, 0, 16)
+    coordLabel.Size = UDim2.new(1, 0, 0, 14); coordLabel.Position = UDim2.new(0, 0, 0, 16)
     coordLabel.BackgroundTransparency = 1
     coordLabel.Text = string.format("%d, %d, %d",
-        math.floor(part.Position.X),
-        math.floor(part.Position.Y),
-        math.floor(part.Position.Z))
+        math.floor(part.Position.X), math.floor(part.Position.Y), math.floor(part.Position.Z))
     coordLabel.TextColor3 = Color3.fromRGB(220, 200, 255)
-    coordLabel.Font = Enum.Font.Code
-    coordLabel.TextSize = 10
-    coordLabel.TextStrokeTransparency = 0
-    coordLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    coordLabel.Font = Enum.Font.Code; coordLabel.TextSize = 10
+    coordLabel.TextStrokeTransparency = 0; coordLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
     coordLabel.Parent = billboard
-
     local distLabel = Instance.new("TextLabel")
-    distLabel.Size = UDim2.new(1, 0, 0, 12)
-    distLabel.Position = UDim2.new(0, 0, 0, 30)
-    distLabel.BackgroundTransparency = 1
-    distLabel.Text = ""
+    distLabel.Size = UDim2.new(1, 0, 0, 12); distLabel.Position = UDim2.new(0, 0, 0, 30)
+    distLabel.BackgroundTransparency = 1; distLabel.Text = ""
     distLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-    distLabel.Font = Enum.Font.Code
-    distLabel.TextSize = 9
-    distLabel.TextStrokeTransparency = 0
-    distLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    distLabel.Font = Enum.Font.Code; distLabel.TextSize = 9
+    distLabel.TextStrokeTransparency = 0; distLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
     distLabel.Parent = billboard
-
     return {billboard = billboard, nameLabel = nameLabel,
         coordLabel = coordLabel, distLabel = distLabel, model = chest, part = part}
 end
@@ -447,7 +446,6 @@ local function AddChestESP(chest)
     end
     local part = GetChestPart(chest)
     if not part then return nil end
-
     local hl = Instance.new("Highlight")
     hl.Name = "BinChestESP"
     hl.Adornee = chest:IsA("Model") and chest or part
@@ -457,12 +455,10 @@ local function AddChestESP(chest)
     hl.OutlineTransparency = 0.1
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     hl.Parent = chest:IsA("Model") and chest or part
-
     local nametag = nil
     if Config.ChestESPNametag then
         nametag = CreateChestTag(chest, part, Config.ChestESPColor)
     end
-
     local data = {model = chest, part = part, hl = hl,
         bg = nametag and nametag.billboard or nil,
         nameLabel = nametag and nametag.nameLabel or nil,
@@ -510,8 +506,6 @@ local function UpdateChestESP()
         if #State.ChestESP > 0 then ClearChestESP() end
         return
     end
-
-    -- Обновляем координаты и дистанцию у существующих
     local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
     local myPos = myRoot and myRoot.Position
     for _, data in ipairs(State.ChestESP) do
@@ -528,15 +522,11 @@ local function UpdateChestESP()
             end
         end
     end
-
     if tick() - State.ChestLastScan < 2 then return end
     if chestBusy then return end
     State.ChestLastScan = tick(); chestBusy = true
-
     task.spawn(function()
         local found = ScanChests()
-
-        -- Убираем исчезнувшие/далёкие
         local toRemove = {}
         for _, data in ipairs(State.ChestESP) do
             local m = data.model
@@ -544,19 +534,15 @@ local function UpdateChestESP()
             elseif not found[m] then table.insert(toRemove, m) end
         end
         for _, m in ipairs(toRemove) do if m then RemoveChestESP(m) end end
-
-        -- Добавляем новые
         for chest, _ in pairs(found) do
-            if not State.ChestESPIndex[chest] then
-                AddChestESP(chest)
-            end
+            if not State.ChestESPIndex[chest] then AddChestESP(chest) end
         end
         chestBusy = false
     end)
 end
 RunService.Heartbeat:Connect(UpdateChestESP)
 
---// ============ Общие ============
+--// Общие
 local function ScaleMobUp(mob)
     if not mob then return end
     for _, d in ipairs(State.ModifiedMobs) do if d.model == mob then return end end
@@ -688,7 +674,7 @@ local function IsInteractiveNPC(model)
     return false
 end
 
---// ПОЛЁТ
+--// Полёт
 local flyBV, flyBG = nil, nil
 local flyInput = {W = false, A = false, S = false, D = false, Space = false, Shift = false}
 
@@ -836,18 +822,15 @@ local function StopFly()
     ClearFly(); RestoreBody(); DisableNoclip()
 end
 
---// ============ АВТО-СУНДУКИ (новая логика) ============
+--// АВТО-СУНДУКИ
 local function StartChestFarm()
-    StopCycle()
-    StopAutoFarm()
+    StopCycle(); StopAutoFarm()
     task.wait(0.2)
     State.ChestRunning = true
     State.ChestCycleCount = 0
-    Log("авто-сундуки: лечу на "..
-        math.floor(Config.ChestStartPos.X)..", "..
+    Log("лечу на "..math.floor(Config.ChestStartPos.X)..", "..
         math.floor(Config.ChestStartPos.Y)..", "..
         math.floor(Config.ChestStartPos.Z))
-
     task.spawn(function()
         while State.ChestRunning do
             if not Alive() then
@@ -861,14 +844,11 @@ local function StartChestFarm()
             end
             if not State.ChestRunning then break end
             State.ChestCycleCount = State.ChestCycleCount + 1
-            -- Летим на стартовые координаты
             FlyTo(Config.ChestStartPos)
-            -- Стоим 3 секунды
             task.wait(3)
-            Log("на позиции сундуков, цикл #"..State.ChestCycleCount)
+            Log("на позиции, цикл #"..State.ChestCycleCount)
             task.wait(5)
         end
-        Log("авто-сундуки остановлены")
     end)
 end
 
@@ -885,7 +865,7 @@ local function StopChestFarm()
     end
 end
 
---// АВТО-ФАРМ МОБОВ
+--// АВТО-ФАРМ
 local function FindNearestMobAny()
     local r = GetRoot(); if not r then return nil end
     local pos = r.Position
@@ -911,7 +891,8 @@ local function AttackMob(mob)
     if not hrp then return end
     pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, hrp.Position) end)
     local vp = Camera.ViewportSize
-    ClickAt(vp.X/2, vp.Y/2)
+    -- Используем уже отмасштабированный ClickAt (передаём центр экрана в базовых координатах)
+    ClickAt(BASE_WIDTH/2, BASE_HEIGHT/2)
     local ch = LP.Character
     if ch then
         local tool = ch:FindFirstChildOfClass("Tool")
@@ -1164,7 +1145,7 @@ local function CreateUI()
 
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -55, 1, 0); title.Position = UDim2.new(0, 18, 0, 0)
-    title.BackgroundTransparency = 1; title.Text = "BIN QUEST"
+    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v65"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left; title.Active = true
@@ -1417,7 +1398,7 @@ local function CreateUI()
     chestInfo.Size = UDim2.new(1, -6, 0, 100)
     chestInfo.Position = UDim2.new(0, 3, 0, 65)
     chestInfo.BackgroundColor3 = COLORS.bgPanel
-    chestInfo.Text = "Лечу на координаты:\n1296, 14, 1513\n\nСтою там. Включи ESP-сундуки\nво вкладке ESP для подсветки."
+    chestInfo.Text = "Лечу на координаты:\n1296, 14, 1513\n\nВключи ESP-сундуки\nво вкладке ESP для подсветки."
     chestInfo.TextColor3 = COLORS.textDim
     chestInfo.Font = Enum.Font.Gotham; chestInfo.TextSize = 11
     chestInfo.TextXAlignment = Enum.TextXAlignment.Center
@@ -1717,9 +1698,33 @@ local function CreateUI()
     cfgScroll.Size = UDim2.new(1, 0, 1, 0)
     cfgScroll.BackgroundTransparency = 1; cfgScroll.BorderSizePixel = 0
     cfgScroll.ScrollBarThickness = 3; cfgScroll.ScrollBarImageColor3 = COLORS.bgAccent
-    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 400); cfgScroll.Parent = cfgPage
+    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 500); cfgScroll.Parent = cfgPage
     local cfgl = Instance.new("UIListLayout", cfgScroll)
     cfgl.Padding = UDim.new(0, 8); cfgl.SortOrder = Enum.SortOrder.LayoutOrder
+
+    -- Инфо о разрешении
+    local resInfo = Instance.new("TextLabel")
+    resInfo.Size = UDim2.new(1, -6, 0, 40)
+    resInfo.BackgroundColor3 = Color3.fromRGB(20, 30, 20)
+    resInfo.LayoutOrder = -1
+    resInfo.Text = ""
+    resInfo.TextColor3 = COLORS.textGreen
+    resInfo.Font = Enum.Font.Code
+    resInfo.TextSize = 11
+    resInfo.Parent = cfgScroll
+    Instance.new("UICorner", resInfo).CornerRadius = UDim.new(0, 14)
+
+    task.spawn(function()
+        while resInfo.Parent do
+            local vp = Camera and Camera.ViewportSize
+            if vp then
+                local sx, sy = GetScreenScale()
+                resInfo.Text = string.format("Экран: %dx%d\nБаза: %dx%d  Масштаб: %.2fx / %.2fx",
+                    vp.X, vp.Y, BASE_WIDTH, BASE_HEIGHT, sx, sy)
+            end
+            task.wait(0.5)
+        end
+    end)
 
     local function MakeSlider(label, order, key, min, max, step, color)
         local row = Instance.new("Frame")
@@ -1863,8 +1868,8 @@ end
 CreateUI()
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "BIN QUEST v64",
-        Text = "📦 Авто-сундуки → 1296,14,1513 + ESP сундуков",
+        Title = "BIN QUEST v65",
+        Text = "Клики масштабируются под любое разрешение",
         Duration = 4,
     })
 end)

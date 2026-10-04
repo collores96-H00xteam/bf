@@ -1,9 +1,10 @@
 --[[
-    BIN'S QUEST — v66
+    BIN'S QUEST — v67
     • АВТО-МАСШТАБ кликов под любое разрешение экрана
     • ЖИВОЙ ОВЕРЛЕЙ КООРДИНАТ (Player / Mouse / World)
     • КНОПКА «ТП ПОД МЫШЬ»
-    • Координаты введены для 1440x900 — теперь работают и на 1920x1080, и на 2560x1440 и т.д.
+    • ПЕРЕКЛЮЧАТЕЛЬ РАЗРЕШЕНИЯ КЛИКОВ (1400x1400 / 1900x1900)
+    • Для 1900x1900 квест «Пиратская деревня → Пираты» кликает по своим кордам
 ]]
 
 local Players             = game:GetService("Players")
@@ -17,11 +18,17 @@ local TweenService        = game:GetService("TweenService")
 local LP = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
---// БАЗОВОЕ РАЗРЕШЕНИЕ (под которое писались клики)
-local BASE_WIDTH  = 1440
-local BASE_HEIGHT = 900
+--// БАЗОВОЕ РАЗРЕШЕНИЕ (переключается в настройках)
+local BASE_WIDTH  = 1400
+local BASE_HEIGHT = 1400
+
+local RESOLUTION_PRESETS = {
+    ["1400x1400"] = {w = 1400, h = 1400},
+    ["1900x1900"] = {w = 1900, h = 1900},
+}
 
 local Config = {
+    ResolutionPreset = "1400x1400",
     FlySpeed    = 200,
     SafeHeight  = 12,
     MobScale    = 6,
@@ -114,6 +121,29 @@ local QUESTS = {
          clicks = {{1075, 483}, {1075, 483}, {1056, 474}}, mobName = "Sky Bandit", killTarget = 5},
     }},
 }
+
+--// Клики для секции «Пираты» в зависимости от выбранного разрешения
+local PIRATE_CLICKS_BY_PRESET = {
+    ["1400x1400"] = {{1146, 403}, {1146, 403}, {1056, 474}},
+    ["1900x1900"] = {{1146, 403}, {1433, 447}, {1373, 517}},
+}
+
+local function GetSectionClicks(s)
+    if s.mobName == "pirate" then
+        local preset = Config.ResolutionPreset or "1400x1400"
+        return PIRATE_CLICKS_BY_PRESET[preset] or s.clicks
+    end
+    return s.clicks
+end
+
+local function SetResolutionPreset(name)
+    local preset = RESOLUTION_PRESETS[name]
+    if not preset then return end
+    Config.ResolutionPreset = name
+    BASE_WIDTH  = preset.w
+    BASE_HEIGHT = preset.h
+    print("[BIN] разрешение -> "..name)
+end
 
 local TP_LOCATIONS = {
     {name = "🏴‍☠️  Пиратский остров",  pos = Vector3.new(1108, 15, 1448)},
@@ -1043,11 +1073,12 @@ end
 
 local function TakeQuestAtNPC(s)
     FlyTo(s.tpPos); task.wait(0.3)
-    for i, clk in ipairs(s.clicks) do
+    local clicks = GetSectionClicks(s)
+    for i, clk in ipairs(clicks) do
         if not State.Running then return false end
         if not Alive() then return false end
         ClickAt(clk[1], clk[2])
-        if i < #s.clicks then task.wait(CLICK_DELAY) end
+        if i < #clicks then task.wait(CLICK_DELAY) end
     end
     task.wait(1.5)
     return true
@@ -1119,7 +1150,7 @@ local function StartSelected()
 end
 
 --// ============================================================
--- ЖИВОЙ ОВЕРЛЕЙ КООРДИНАТ (Бин допилил v66)
+-- ЖИВОЙ ОВЕРЛЕЙ КООРДИНАТ
 -- ============================================================
 local function CreateLiveOverlay()
     local liveOverlay = Instance.new("ScreenGui")
@@ -1175,7 +1206,6 @@ local function CreateLiveOverlay()
     worldMouseLabel.TextXAlignment = Enum.TextXAlignment.Left
     worldMouseLabel.Parent = liveFrame
 
-    -- Перетаскивание оверлея
     local dragging, dragStart, startPos
     liveFrame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -1201,7 +1231,6 @@ local function CreateLiveOverlay()
         end
     end)
 
-    -- Обновление координат каждый кадр
     RunService.RenderStepped:Connect(function()
         local char = LP.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1259,7 +1288,7 @@ local function CreateUI()
 
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -55, 1, 0); title.Position = UDim2.new(0, 18, 0, 0)
-    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v66"
+    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v67"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left; title.Active = true
@@ -1602,7 +1631,6 @@ local function CreateUI()
         end
     end)
 
-    -- СОХРАНИТЬ + МОЯ ПОЗИЦИЯ (в ряд)
     local saveBtn = Instance.new("TextButton")
     saveBtn.Size = UDim2.new(0.49, -3, 0, 34)
     saveBtn.Position = UDim2.new(0.01, 0, 0, 130)
@@ -1632,7 +1660,6 @@ local function CreateUI()
         end
     end)
 
-    -- ТП ПОД МЫШЬ (v66)
     local tpMouseBtn = Instance.new("TextButton")
     tpMouseBtn.Size = UDim2.new(1, -6, 0, 34)
     tpMouseBtn.Position = UDim2.new(0, 3, 0, 170)
@@ -1870,7 +1897,7 @@ local function CreateUI()
     cfgScroll.Size = UDim2.new(1, 0, 1, 0)
     cfgScroll.BackgroundTransparency = 1; cfgScroll.BorderSizePixel = 0
     cfgScroll.ScrollBarThickness = 3; cfgScroll.ScrollBarImageColor3 = COLORS.bgAccent
-    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 500); cfgScroll.Parent = cfgPage
+    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 600); cfgScroll.Parent = cfgPage
     local cfgl = Instance.new("UIListLayout", cfgScroll)
     cfgl.Padding = UDim.new(0, 8); cfgl.SortOrder = Enum.SortOrder.LayoutOrder
 
@@ -1890,12 +1917,83 @@ local function CreateUI()
             local vp = Camera and Camera.ViewportSize
             if vp then
                 local sx, sy = GetScreenScale()
-                resInfo.Text = string.format("Экран: %dx%d\nБаза: %dx%d  Масштаб: %.2fx / %.2fx",
+                resInfo.Text = string.format("Экран: %dx%d\nКлики: %dx%d  Масштаб: %.2fx / %.2fx",
                     vp.X, vp.Y, BASE_WIDTH, BASE_HEIGHT, sx, sy)
             end
             task.wait(0.5)
         end
     end)
+
+    -- === ВЫБОР РАЗРЕШЕНИЯ КЛИКОВ ===
+    local resRow = Instance.new("Frame")
+    resRow.Size = UDim2.new(1, -6, 0, 56)
+    resRow.BackgroundColor3 = COLORS.bgPanel
+    resRow.BorderSizePixel = 0
+    resRow.LayoutOrder = 0
+    resRow.Parent = cfgScroll
+    Instance.new("UICorner", resRow).CornerRadius = UDim.new(0, 14)
+    local rsStroke = Instance.new("UIStroke", resRow)
+    rsStroke.Color = COLORS.stroke; rsStroke.Thickness = 1; rsStroke.Transparency = 0.5
+
+    local resLbl = Instance.new("TextLabel")
+    resLbl.Size = UDim2.new(1, -20, 0, 18)
+    resLbl.Position = UDim2.new(0, 14, 0, 5)
+    resLbl.BackgroundTransparency = 1
+    resLbl.Text = "Разрешение кликов"
+    resLbl.TextColor3 = COLORS.text
+    resLbl.Font = Enum.Font.GothamBold
+    resLbl.TextSize = 12
+    resLbl.TextXAlignment = Enum.TextXAlignment.Left
+    resLbl.Parent = resRow
+
+    local resBtnHolder = Instance.new("Frame")
+    resBtnHolder.Size = UDim2.new(1, -12, 0, 28)
+    resBtnHolder.Position = UDim2.new(0, 6, 0, 24)
+    resBtnHolder.BackgroundTransparency = 1
+    resBtnHolder.Parent = resRow
+
+    local resButtons = {}
+    local function RefreshResButtons()
+        for name, btn in pairs(resButtons) do
+            if Config.ResolutionPreset == name then
+                btn.BackgroundColor3 = COLORS.bgStart
+                btn.TextColor3 = Color3.fromRGB(230, 255, 230)
+                btn.Text = "● "..name
+            else
+                btn.BackgroundColor3 = COLORS.bgAccent
+                btn.TextColor3 = COLORS.text
+                btn.Text = "○ "..name
+            end
+        end
+    end
+
+    for idx, name in ipairs({"1400x1400", "1900x1900"}) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.485, 0, 1, 0)
+        btn.Position = UDim2.new((idx-1)*0.51 + 0.005, 0, 0, 0)
+        btn.BackgroundColor3 = COLORS.bgAccent
+        btn.Text = "○ "..name
+        btn.TextColor3 = COLORS.text
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 11
+        btn.AutoButtonColor = false
+        btn.Parent = resBtnHolder
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+        btn.MouseButton1Click:Connect(function()
+            SetResolutionPreset(name)
+            RefreshResButtons()
+            pcall(function()
+                StarterGui:SetCore("SendNotification", {
+                    Title = "Разрешение",
+                    Text = "Выбрано: "..name,
+                    Duration = 3,
+                })
+            end)
+        end)
+        resButtons[name] = btn
+    end
+
+    RefreshResButtons()
 
     local function MakeSlider(label, order, key, min, max, step, color)
         local row = Instance.new("Frame")
@@ -1955,7 +2053,7 @@ local function CreateUI()
         return val
     end
 
-    MakeSlider("Радиус фарма мобов", 0, "FarmRadius", 20, 500, 10, Color3.fromRGB(140, 90, 50))
+    MakeSlider("Радиус фарма мобов", 1, "FarmRadius", 20, 500, 10, Color3.fromRGB(140, 90, 50))
     MakeSlider("Скорость полёта", 2, "FlySpeed", 50, 500, 10)
     MakeSlider("Высота над мобом", 3, "SafeHeight", 3, 40, 1)
     MakeSlider("Размер моба (x)", 4, "MobScale", 1, 8, 0.5)
@@ -2041,8 +2139,8 @@ CreateLiveOverlay()
 
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "BIN QUEST v66",
-        Text = "Живые координаты + ТП под мышь. Ня!",
+        Title = "BIN QUEST v67",
+        Text = "Переключатель разрешения в НАСТР. Ня!",
         Duration = 4,
     })
 end)

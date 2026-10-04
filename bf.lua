@@ -1,6 +1,8 @@
 --[[
-    BIN'S QUEST — v65
+    BIN'S QUEST — v66
     • АВТО-МАСШТАБ кликов под любое разрешение экрана
+    • ЖИВОЙ ОВЕРЛЕЙ КООРДИНАТ (Player / Mouse / World)
+    • КНОПКА «ТП ПОД МЫШЬ»
     • Координаты введены для 1440x900 — теперь работают и на 1920x1080, и на 2560x1440 и т.д.
 ]]
 
@@ -890,8 +892,6 @@ local function AttackMob(mob)
     local hrp = mob:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, hrp.Position) end)
-    local vp = Camera.ViewportSize
-    -- Используем уже отмасштабированный ClickAt (передаём центр экрана в базовых координатах)
     ClickAt(BASE_WIDTH/2, BASE_HEIGHT/2)
     local ch = LP.Character
     if ch then
@@ -1118,6 +1118,120 @@ local function StartSelected()
     end)
 end
 
+--// ============================================================
+-- ЖИВОЙ ОВЕРЛЕЙ КООРДИНАТ (Бин допилил v66)
+-- ============================================================
+local function CreateLiveOverlay()
+    local liveOverlay = Instance.new("ScreenGui")
+    liveOverlay.Name = "BinLiveCoords"
+    liveOverlay.ResetOnSpawn = false
+    liveOverlay.Parent = LP:WaitForChild("PlayerGui")
+
+    local liveFrame = Instance.new("Frame")
+    liveFrame.Size = UDim2.new(0, 250, 0, 92)
+    liveFrame.Position = UDim2.new(0, 10, 0, 10)
+    liveFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 10)
+    liveFrame.BackgroundTransparency = 0.25
+    liveFrame.BorderSizePixel = 0
+    liveFrame.Active = true
+    liveFrame.Parent = liveOverlay
+    Instance.new("UICorner", liveFrame).CornerRadius = UDim.new(0, 12)
+
+    local liveStroke = Instance.new("UIStroke", liveFrame)
+    liveStroke.Color = Color3.fromRGB(80, 60, 100)
+    liveStroke.Thickness = 1
+    liveStroke.Transparency = 0.5
+
+    local playerCoordLabel = Instance.new("TextLabel")
+    playerCoordLabel.Size = UDim2.new(1, -10, 0, 20)
+    playerCoordLabel.Position = UDim2.new(0, 5, 0, 5)
+    playerCoordLabel.BackgroundTransparency = 1
+    playerCoordLabel.Text = "Player: ..."
+    playerCoordLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+    playerCoordLabel.Font = Enum.Font.Code
+    playerCoordLabel.TextSize = 12
+    playerCoordLabel.TextXAlignment = Enum.TextXAlignment.Left
+    playerCoordLabel.Parent = liveFrame
+
+    local mouseCoordLabel = Instance.new("TextLabel")
+    mouseCoordLabel.Size = UDim2.new(1, -10, 0, 20)
+    mouseCoordLabel.Position = UDim2.new(0, 5, 0, 28)
+    mouseCoordLabel.BackgroundTransparency = 1
+    mouseCoordLabel.Text = "Mouse: ..."
+    mouseCoordLabel.TextColor3 = Color3.fromRGB(255, 200, 220)
+    mouseCoordLabel.Font = Enum.Font.Code
+    mouseCoordLabel.TextSize = 12
+    mouseCoordLabel.TextXAlignment = Enum.TextXAlignment.Left
+    mouseCoordLabel.Parent = liveFrame
+
+    local worldMouseLabel = Instance.new("TextLabel")
+    worldMouseLabel.Size = UDim2.new(1, -10, 0, 20)
+    worldMouseLabel.Position = UDim2.new(0, 5, 0, 51)
+    worldMouseLabel.BackgroundTransparency = 1
+    worldMouseLabel.Text = "World: ..."
+    worldMouseLabel.TextColor3 = Color3.fromRGB(200, 255, 200)
+    worldMouseLabel.Font = Enum.Font.Code
+    worldMouseLabel.TextSize = 12
+    worldMouseLabel.TextXAlignment = Enum.TextXAlignment.Left
+    worldMouseLabel.Parent = liveFrame
+
+    -- Перетаскивание оверлея
+    local dragging, dragStart, startPos
+    liveFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = liveFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+                         or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            liveFrame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    -- Обновление координат каждый кадр
+    RunService.RenderStepped:Connect(function()
+        local char = LP.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            playerCoordLabel.Text = string.format("Player: %.0f, %.0f, %.0f",
+                hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
+        else
+            playerCoordLabel.Text = "Player: нет персонажа"
+        end
+
+        local mousePos = UserInputService:GetMouseLocation()
+        mouseCoordLabel.Text = string.format("Mouse: %d, %d", mousePos.X, mousePos.Y)
+
+        local camera = Workspace.CurrentCamera
+        if camera then
+            local unitRay = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+            local rayParams = RaycastParams.new()
+            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+            rayParams.FilterDescendantsInstances = {char}
+            local result = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, rayParams)
+            if result then
+                worldMouseLabel.Text = string.format("World: %.0f, %.0f, %.0f",
+                    result.Position.X, result.Position.Y, result.Position.Z)
+            else
+                worldMouseLabel.Text = "World: ---"
+            end
+        end
+    end)
+end
+
 --// UI
 local function CreateUI()
     local gui = Instance.new("ScreenGui")
@@ -1145,7 +1259,7 @@ local function CreateUI()
 
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -55, 1, 0); title.Position = UDim2.new(0, 18, 0, 0)
-    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v65"
+    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v66"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left; title.Active = true
@@ -1193,9 +1307,11 @@ local function CreateUI()
     tabQuest.TextColor3 = COLORS.text
 
     local function SetTabActive(active, inactives)
-        TweenService:Create(active, TweenInfo.new(0.15), {BackgroundColor3=COLORS.bgAccent, BackgroundTransparency=0, TextColor3=COLORS.text}):Play()
+        TweenService:Create(active, TweenInfo.new(0.15),
+            {BackgroundColor3=COLORS.bgAccent, BackgroundTransparency=0, TextColor3=COLORS.text}):Play()
         for _, inac in ipairs(inactives) do
-            TweenService:Create(inac, TweenInfo.new(0.15), {BackgroundTransparency=1, TextColor3=COLORS.textDim}):Play()
+            TweenService:Create(inac, TweenInfo.new(0.15),
+                {BackgroundTransparency=1, TextColor3=COLORS.textDim}):Play()
         end
     end
 
@@ -1273,7 +1389,8 @@ local function CreateUI()
                 local menuH = #quest.sections * 38 + 16
                 local menu = Instance.new("Frame")
                 menu.Size = UDim2.new(0, 230, 0, menuH)
-                menu.Position = UDim2.new(0, qBtn.AbsolutePosition.X + 55, 0, qBtn.AbsolutePosition.Y + 25)
+                menu.Position = UDim2.new(0, qBtn.AbsolutePosition.X + 55,
+                    0, qBtn.AbsolutePosition.Y + 25)
                 menu.BackgroundColor3 = COLORS.bgPanel
                 menu.BorderSizePixel = 0; menu.ZIndex = 10; menu.Parent = gui
                 Instance.new("UICorner", menu).CornerRadius = UDim.new(0, 14)
@@ -1452,14 +1569,14 @@ local function CreateUI()
     local inputZ = MakeInput("Z", 0.67, 0.32)
 
     local flyBtn = Instance.new("TextButton")
-    flyBtn.Size = UDim2.new(1, -6, 0, 50)
+    flyBtn.Size = UDim2.new(1, -6, 0, 46)
     flyBtn.Position = UDim2.new(0, 3, 0, 78)
     flyBtn.BackgroundColor3 = COLORS.bgFly
     flyBtn.Text = "✈  ЛЕТЕТЬ ПО КООРДИНАТАМ"
     flyBtn.TextColor3 = COLORS.textBlue
-    flyBtn.Font = Enum.Font.GothamBold; flyBtn.TextSize = 14
+    flyBtn.Font = Enum.Font.GothamBold; flyBtn.TextSize = 13
     flyBtn.AutoButtonColor = false; flyBtn.Parent = coordPage
-    Instance.new("UICorner", flyBtn).CornerRadius = UDim.new(0, 14)
+    Instance.new("UICorner", flyBtn).CornerRadius = UDim.new(0, 12)
     local fbtnStroke = Instance.new("UIStroke", flyBtn)
     fbtnStroke.Color = Color3.fromRGB(80, 120, 180); fbtnStroke.Thickness = 1; fbtnStroke.Transparency = 0.4
 
@@ -1471,7 +1588,9 @@ local function CreateUI()
     end)
 
     flyBtn.MouseButton1Click:Connect(function()
-        local x = tonumber(inputX.Text); local y = tonumber(inputY.Text); local z = tonumber(inputZ.Text)
+        local x = tonumber(inputX.Text)
+        local y = tonumber(inputY.Text)
+        local z = tonumber(inputZ.Text)
         if x and y and z then
             StopCycle(); StopAutoFarm(); StopChestFarm()
             task.spawn(function() FlyTo(Vector3.new(x, y, z)) end)
@@ -1483,9 +1602,10 @@ local function CreateUI()
         end
     end)
 
+    -- СОХРАНИТЬ + МОЯ ПОЗИЦИЯ (в ряд)
     local saveBtn = Instance.new("TextButton")
-    saveBtn.Size = UDim2.new(0.49, -3, 0, 36)
-    saveBtn.Position = UDim2.new(0.01, 0, 0, 135)
+    saveBtn.Size = UDim2.new(0.49, -3, 0, 34)
+    saveBtn.Position = UDim2.new(0.01, 0, 0, 130)
     saveBtn.BackgroundColor3 = COLORS.bgSelect
     saveBtn.Text = "💾 СОХРАНИТЬ"
     saveBtn.TextColor3 = Color3.fromRGB(200, 230, 200)
@@ -1494,8 +1614,8 @@ local function CreateUI()
     Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 10)
 
     local myPosBtn = Instance.new("TextButton")
-    myPosBtn.Size = UDim2.new(0.49, -3, 0, 36)
-    myPosBtn.Position = UDim2.new(0.5, 0, 0, 135)
+    myPosBtn.Size = UDim2.new(0.49, -3, 0, 34)
+    myPosBtn.Position = UDim2.new(0.5, 0, 0, 130)
     myPosBtn.BackgroundColor3 = COLORS.bgAccent
     myPosBtn.Text = "📍 МОЯ ПОЗИЦИЯ"
     myPosBtn.TextColor3 = COLORS.textAccent
@@ -1512,8 +1632,58 @@ local function CreateUI()
         end
     end)
 
+    -- ТП ПОД МЫШЬ (v66)
+    local tpMouseBtn = Instance.new("TextButton")
+    tpMouseBtn.Size = UDim2.new(1, -6, 0, 34)
+    tpMouseBtn.Position = UDim2.new(0, 3, 0, 170)
+    tpMouseBtn.BackgroundColor3 = Color3.fromRGB(60, 40, 80)
+    tpMouseBtn.Text = "🖱  ТП ПОД МЫШЬ"
+    tpMouseBtn.TextColor3 = Color3.fromRGB(220, 180, 255)
+    tpMouseBtn.Font = Enum.Font.GothamBold
+    tpMouseBtn.TextSize = 12
+    tpMouseBtn.AutoButtonColor = false
+    tpMouseBtn.Parent = coordPage
+    Instance.new("UICorner", tpMouseBtn).CornerRadius = UDim.new(0, 10)
+    local tpMouseStroke = Instance.new("UIStroke", tpMouseBtn)
+    tpMouseStroke.Color = Color3.fromRGB(130, 90, 180); tpMouseStroke.Thickness = 1; tpMouseStroke.Transparency = 0.4
+
+    tpMouseBtn.MouseEnter:Connect(function()
+        TweenService:Create(tpMouseBtn, TweenInfo.new(0.15),
+            {BackgroundColor3 = Color3.fromRGB(90, 60, 120)}):Play()
+    end)
+    tpMouseBtn.MouseLeave:Connect(function()
+        TweenService:Create(tpMouseBtn, TweenInfo.new(0.15),
+            {BackgroundColor3 = Color3.fromRGB(60, 40, 80)}):Play()
+    end)
+
+    tpMouseBtn.MouseButton1Click:Connect(function()
+        local mousePos = UserInputService:GetMouseLocation()
+        local camera = Workspace.CurrentCamera
+        if not camera then return end
+        local unitRay = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = {LP.Character}
+        local result = Workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, rayParams)
+        if result then
+            local pos = result.Position
+            inputX.Text = tostring(math.floor(pos.X))
+            inputY.Text = tostring(math.floor(pos.Y))
+            inputZ.Text = tostring(math.floor(pos.Z))
+            StopCycle(); StopAutoFarm(); StopChestFarm()
+            task.spawn(function() FlyTo(pos) end)
+        else
+            pcall(function()
+                StarterGui:SetCore("SendNotification", {
+                    Title = "⚠ Ошибка",
+                    Text = "Не вижу точку под мышью, котик",
+                    Duration = 2})
+            end)
+        end
+    end)
+
     local savedTitle = Instance.new("TextLabel")
-    savedTitle.Size = UDim2.new(1, -6, 0, 22); savedTitle.Position = UDim2.new(0, 3, 0, 180)
+    savedTitle.Size = UDim2.new(1, -6, 0, 20); savedTitle.Position = UDim2.new(0, 3, 0, 210)
     savedTitle.BackgroundTransparency = 1
     savedTitle.Text = "СОХРАНЁННЫЕ ТОЧКИ"
     savedTitle.TextColor3 = COLORS.textDim
@@ -1521,8 +1691,8 @@ local function CreateUI()
     savedTitle.Parent = coordPage
 
     local savedScroll = Instance.new("ScrollingFrame")
-    savedScroll.Size = UDim2.new(1, -6, 0, 250)
-    savedScroll.Position = UDim2.new(0, 3, 0, 205)
+    savedScroll.Size = UDim2.new(1, -6, 0, 220)
+    savedScroll.Position = UDim2.new(0, 3, 0, 233)
     savedScroll.BackgroundTransparency = 1; savedScroll.BorderSizePixel = 0
     savedScroll.ScrollBarThickness = 3; savedScroll.ScrollBarImageColor3 = COLORS.bgAccent
     savedScroll.CanvasSize = UDim2.new(0, 0, 0, 500); savedScroll.Parent = coordPage
@@ -1588,7 +1758,9 @@ local function CreateUI()
     end
 
     saveBtn.MouseButton1Click:Connect(function()
-        local x = tonumber(inputX.Text); local y = tonumber(inputY.Text); local z = tonumber(inputZ.Text)
+        local x = tonumber(inputX.Text)
+        local y = tonumber(inputY.Text)
+        local z = tonumber(inputZ.Text)
         if x and y and z then
             table.insert(SavedCoords, {name = "точка "..#SavedCoords, x = x, y = y, z = z})
             RefreshSavedCoords()
@@ -1702,7 +1874,6 @@ local function CreateUI()
     local cfgl = Instance.new("UIListLayout", cfgScroll)
     cfgl.Padding = UDim.new(0, 8); cfgl.SortOrder = Enum.SortOrder.LayoutOrder
 
-    -- Инфо о разрешении
     local resInfo = Instance.new("TextLabel")
     resInfo.Size = UDim2.new(1, -6, 0, 40)
     resInfo.BackgroundColor3 = Color3.fromRGB(20, 30, 20)
@@ -1866,10 +2037,12 @@ local function CreateUI()
 end
 
 CreateUI()
+CreateLiveOverlay()
+
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "BIN QUEST v65",
-        Text = "Клики масштабируются под любое разрешение",
+        Title = "BIN QUEST v66",
+        Text = "Живые координаты + ТП под мышь. Ня!",
         Duration = 4,
     })
 end)

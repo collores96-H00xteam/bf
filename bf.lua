@@ -17,8 +17,8 @@ local Camera = Workspace.CurrentCamera
 local Config = {
     FlySpeed    = 200,
     SafeHeight  = 18,
-    MobScale    = 4,
-    HitboxSize  = 320,
+    MobScale    = 6,
+    HitboxSize  = 40,
 }
 local FLY_ARRIVE    = 4
 local KILL_TIMEOUT  = 20

@@ -1,6 +1,6 @@
 --[[
-    BIN'S QUEST — v44
-    Chef: 2-й клик на (1090, 552)
+    BIN'S QUEST — v46
+    ФИКС: список ТП скроллится, кнопки не выпирают
 ]]
 
 local Players             = game:GetService("Players")
@@ -16,9 +16,9 @@ local Camera = Workspace.CurrentCamera
 
 local Config = {
     FlySpeed    = 200,
-    SafeHeight  = 22,
-    MobScale    = 6,
-    HitboxSize  = 30,
+    SafeHeight  = 18,
+    MobScale    = 4,
+    HitboxSize  = 320,
 }
 local FLY_ARRIVE    = 4
 local KILL_TIMEOUT  = 20
@@ -78,6 +78,10 @@ local TP_LOCATIONS = {
     {name = "🏙️  Средний город",     pos = Vector3.new(-654, 5, 1578)},
     {name = "🌴  Джунгли",           pos = Vector3.new(-1683, 50, 175)},
     {name = "🏘️  Пиратская деревня", pos = Vector3.new(-1265, 27, 4086)},
+    {name = "⚓  Морской начинающий", pos = Vector3.new(-2565, 6, 2065)},
+    {name = "❄️  Ледяная деревня",   pos = Vector3.new(1453, 78, -1279)},
+    {name = "⛲  Город Фонтанов",    pos = Vector3.new(5205, 76, 4073)},
+    {name = "🌋  Магмовая деревня",  pos = Vector3.new(-5328, 18, 8482)},
 }
 
 local State = {
@@ -644,7 +648,7 @@ local function CreateUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -50, 1, 0); title.Position = UDim2.new(0, 15, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "⚡  БИН — АВТО КВЕСТ v44"
+    title.Text = "⚡  БИН — АВТО КВЕСТ v46"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 15
     title.TextXAlignment = Enum.TextXAlignment.Left
@@ -697,16 +701,28 @@ local function CreateUI()
         end
     end
 
+    -- КВЕСТ PAGE
     local questPage = Instance.new("Frame")
     questPage.Size = UDim2.new(1, -20, 1, -160)
     questPage.Position = UDim2.new(0, 10, 0, 90)
     questPage.BackgroundTransparency = 1; questPage.Parent = main
-    local ql = Instance.new("UIListLayout", questPage); ql.Padding = UDim.new(0, 8)
+
+    -- Внутри квестов - скролл
+    local questScroll = Instance.new("ScrollingFrame")
+    questScroll.Size = UDim2.new(1, 0, 1, 0)
+    questScroll.Position = UDim2.new(0, 0, 0, 0)
+    questScroll.BackgroundTransparency = 1
+    questScroll.BorderSizePixel = 0
+    questScroll.ScrollBarThickness = 4
+    questScroll.ScrollBarImageColor3 = COLORS.bgAccent
+    questScroll.CanvasSize = UDim2.new(0, 0, 0, 380)
+    questScroll.Parent = questPage
+    local ql = Instance.new("UIListLayout", questScroll); ql.Padding = UDim.new(0, 8); ql.SortOrder = Enum.SortOrder.LayoutOrder
 
     local questsContainer = Instance.new("Frame")
-    questsContainer.Size = UDim2.new(1, 0, 0, 190)
+    questsContainer.Size = UDim2.new(1, -6, 0, 190)
     questsContainer.BackgroundTransparency = 1
-    questsContainer.LayoutOrder = 1; questsContainer.Parent = questPage
+    questsContainer.LayoutOrder = 1; questsContainer.Parent = questScroll
     local qcl = Instance.new("UIListLayout", questsContainer); qcl.Padding = UDim.new(0, 8)
 
     local questButtons = {}
@@ -799,17 +815,20 @@ local function CreateUI()
         end)
     end
 
+    -- Кнопка СТАРТ - внизу questPage (не скролится)
     local actionContainer = Instance.new("Frame")
     actionContainer.Size = UDim2.new(1, 0, 0, 60)
+    actionContainer.Position = UDim2.new(0, 0, 1, -100)
     actionContainer.BackgroundTransparency = 1
-    actionContainer.LayoutOrder = 2; actionContainer.Parent = questPage
+    actionContainer.Parent = questPage
 
     local startBtn = Instance.new("TextButton")
-    startBtn.Size = UDim2.new(1, 0, 0, 55)
+    startBtn.Size = UDim2.new(1, 0, 0, 45)
+    startBtn.Position = UDim2.new(0, 0, 0, 0)
     startBtn.BackgroundColor3 = COLORS.bgStart
     startBtn.Text = "▶   СТАРТ"
     startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    startBtn.Font = Enum.Font.GothamBold; startBtn.TextSize = 17
+    startBtn.Font = Enum.Font.GothamBold; startBtn.TextSize = 15
     startBtn.AutoButtonColor = false; startBtn.Parent = actionContainer
     Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 10)
     startBtn.MouseButton1Click:Connect(function()
@@ -817,53 +836,57 @@ local function CreateUI()
     end)
     UI.startBtn = startBtn
 
-    local infoContainer = Instance.new("Frame")
-    infoContainer.Size = UDim2.new(1, 0, 0, 60)
-    infoContainer.BackgroundTransparency = 1
-    infoContainer.LayoutOrder = 3; infoContainer.Parent = questPage
-
     local statusBox = Instance.new("Frame")
-    statusBox.Size = UDim2.new(1, 0, 0, 26)
+    statusBox.Size = UDim2.new(1, 0, 0, 22)
+    statusBox.Position = UDim2.new(0, 0, 0, 48)
     statusBox.BackgroundColor3 = COLORS.bgPanel
-    statusBox.BorderSizePixel = 0; statusBox.Parent = infoContainer
-    Instance.new("UICorner", statusBox).CornerRadius = UDim.new(0, 8)
+    statusBox.BorderSizePixel = 0; statusBox.Parent = actionContainer
+    Instance.new("UICorner", statusBox).CornerRadius = UDim.new(0, 6)
     local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, -16, 1, 0); status.Position = UDim2.new(0, 8, 0, 0)
+    status.Size = UDim2.new(1, -10, 1, 0); status.Position = UDim2.new(0, 5, 0, 0)
     status.BackgroundTransparency = 1
     status.Text = "Статус: готов"; status.TextColor3 = COLORS.textDim
-    status.Font = Enum.Font.GothamBold; status.TextSize = 12
+    status.Font = Enum.Font.GothamBold; status.TextSize = 10
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.Parent = statusBox
 
-    local debugBox = Instance.new("Frame")
-    debugBox.Size = UDim2.new(1, 0, 0, 26)
-    debugBox.Position = UDim2.new(0, 0, 0, 32)
-    debugBox.BackgroundColor3 = Color3.fromRGB(14, 22, 18)
-    debugBox.BorderSizePixel = 0; debugBox.Parent = infoContainer
-    Instance.new("UICorner", debugBox).CornerRadius = UDim.new(0, 8)
     local debug = Instance.new("TextLabel")
-    debug.Size = UDim2.new(1, -16, 1, 0); debug.Position = UDim2.new(0, 8, 0, 0)
-    debug.BackgroundTransparency = 1
+    debug.Size = UDim2.new(1, 0, 0, 22)
+    debug.Position = UDim2.new(0, 0, 0, 72)
+    debug.BackgroundColor3 = Color3.fromRGB(14, 22, 18)
     debug.Text = "отладка: ..."; debug.TextColor3 = COLORS.textGreen
-    debug.Font = Enum.Font.Code; debug.TextSize = 11
+    debug.Font = Enum.Font.Code; debug.TextSize = 10
     debug.TextXAlignment = Enum.TextXAlignment.Left
-    debug.Parent = debugBox
+    debug.Parent = actionContainer
+    Instance.new("UICorner", debug).CornerRadius = UDim.new(0, 6)
 
+    -- ТП PAGE со ScrollingFrame
     local tpPage = Instance.new("Frame")
     tpPage.Size = UDim2.new(1, -20, 1, -160)
     tpPage.Position = UDim2.new(0, 10, 0, 90)
     tpPage.BackgroundTransparency = 1; tpPage.Visible = false; tpPage.Parent = main
-    local tpl = Instance.new("UIListLayout", tpPage); tpl.Padding = UDim.new(0, 8)
+
+    local tpScroll = Instance.new("ScrollingFrame")
+    tpScroll.Size = UDim2.new(1, 0, 1, 0)
+    tpScroll.Position = UDim2.new(0, 0, 0, 0)
+    tpScroll.BackgroundTransparency = 1
+    tpScroll.BorderSizePixel = 0
+    tpScroll.ScrollBarThickness = 5
+    tpScroll.ScrollBarImageColor3 = COLORS.bgAccent
+    tpScroll.CanvasSize = UDim2.new(0, 0, 0, #TP_LOCATIONS * 56)
+    tpScroll.Parent = tpPage
+
+    local tpl = Instance.new("UIListLayout", tpScroll); tpl.Padding = UDim.new(0, 8); tpl.SortOrder = Enum.SortOrder.LayoutOrder
 
     for i, loc in ipairs(TP_LOCATIONS) do
         local tpBtn = Instance.new("TextButton")
-        tpBtn.Size = UDim2.new(1, 0, 0, 48)
+        tpBtn.Size = UDim2.new(1, -8, 0, 48)
         tpBtn.BackgroundColor3 = Color3.fromRGB(40, 55, 95)
         tpBtn.Text = "➤   " .. loc.name
         tpBtn.TextColor3 = Color3.fromRGB(220, 230, 255)
-        tpBtn.Font = Enum.Font.GothamBold; tpBtn.TextSize = 14
+        tpBtn.Font = Enum.Font.GothamBold; tpBtn.TextSize = 13
         tpBtn.LayoutOrder = i; tpBtn.AutoButtonColor = false
-        tpBtn.Parent = tpPage
+        tpBtn.Parent = tpScroll
         Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 10)
         local pos = loc.pos
         tpBtn.MouseButton1Click:Connect(function()
@@ -872,21 +895,31 @@ local function CreateUI()
         end)
     end
 
+    -- НАСТР PAGE
     local cfgPage = Instance.new("Frame")
     cfgPage.Size = UDim2.new(1, -20, 1, -160)
     cfgPage.Position = UDim2.new(0, 10, 0, 90)
     cfgPage.BackgroundTransparency = 1; cfgPage.Visible = false; cfgPage.Parent = main
 
-    local cfgl = Instance.new("UIListLayout", cfgPage)
+    local cfgScroll = Instance.new("ScrollingFrame")
+    cfgScroll.Size = UDim2.new(1, 0, 1, 0)
+    cfgScroll.BackgroundTransparency = 1
+    cfgScroll.BorderSizePixel = 0
+    cfgScroll.ScrollBarThickness = 5
+    cfgScroll.ScrollBarImageColor3 = COLORS.bgAccent
+    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 350)
+    cfgScroll.Parent = cfgPage
+
+    local cfgl = Instance.new("UIListLayout", cfgScroll)
     cfgl.Padding = UDim.new(0, 8)
     cfgl.SortOrder = Enum.SortOrder.LayoutOrder
 
     local flyRow = Instance.new("Frame")
-    flyRow.Size = UDim2.new(1, 0, 0, 48)
+    flyRow.Size = UDim2.new(1, -8, 0, 48)
     flyRow.BackgroundColor3 = COLORS.bgPanel
     flyRow.BorderSizePixel = 0
     flyRow.LayoutOrder = 1
-    flyRow.Parent = cfgPage
+    flyRow.Parent = cfgScroll
     Instance.new("UICorner", flyRow).CornerRadius = UDim.new(0, 10)
 
     local flyLbl = Instance.new("TextLabel")
@@ -920,11 +953,11 @@ local function CreateUI()
 
     local function MakeSlider(label, order, key, min, max, step)
         local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, 0, 0, 56)
+        row.Size = UDim2.new(1, -8, 0, 56)
         row.BackgroundColor3 = COLORS.bgPanel
         row.BorderSizePixel = 0
         row.LayoutOrder = order
-        row.Parent = cfgPage
+        row.Parent = cfgScroll
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 10)
 
         local lbl = Instance.new("TextLabel")
@@ -1008,16 +1041,16 @@ local function CreateUI()
     task.spawn(function()
         while gui.Parent do
             if State.Running and State.ActiveSection then
-                status.Text = "⚔️  "..State.ActiveSection.name.." — "..State.Killed.."/"..State.ActiveSection.killTarget
+                status.Text = "⚔️ "..State.ActiveSection.name.." — "..State.Killed.."/"..State.ActiveSection.killTarget
                 status.TextColor3 = Color3.fromRGB(180, 255, 180)
             elseif State.FlyActive then
-                status.Text = "✈️ Свободный полёт активен"
+                status.Text = "✈️ Свободный полёт"
                 status.TextColor3 = Color3.fromRGB(150, 200, 255)
             elseif State.SelectedSection then
-                status.Text = "✓ Выбрано: "..State.SelectedSection.name
+                status.Text = "✓ "..State.SelectedSection.name
                 status.TextColor3 = COLORS.textAccent
             else
-                status.Text = "Статус: выбери секцию"
+                status.Text = "Выбери секцию"
                 status.TextColor3 = COLORS.textDim
             end
             debug.Text = "отладка: "..State.DebugText
@@ -1045,8 +1078,8 @@ end
 CreateUI()
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "⚡ БИН v44",
-        Text = "Chef: 2-й клик (1090, 552)",
+        Title = "⚡ БИН v46",
+        Text = "Список ТП теперь со скроллом",
         Duration = 4,
     })
 end)

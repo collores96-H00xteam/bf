@@ -1,6 +1,6 @@
 --[[
-    BIN'S QUEST — v49
-    ФИКС: GUI можно двигать с любого места (titleBar + фон)
+    BIN'S QUEST — v54
+    Хитбокс 60, размер моба x6, высота 12
 ]]
 
 local Players             = game:GetService("Players")
@@ -16,9 +16,9 @@ local Camera = Workspace.CurrentCamera
 
 local Config = {
     FlySpeed    = 200,
-    SafeHeight  = 18,
-    MobScale    = 4,
-    HitboxSize  = 320,
+    SafeHeight  = 12,     -- высота 12
+    MobScale    = 6,      -- размер моба x6
+    HitboxSize  = 60,     -- хитбокс 60
 }
 local FLY_ARRIVE    = 4
 local KILL_TIMEOUT  = 20
@@ -92,6 +92,9 @@ local State = {
     WeaponName = "нет",
     FlyActive = false,
     WasDead = false,
+    UICurrent = 0,
+    UIRequired = 0,
+    UIFound = false,
 }
 local UI = {}
 
@@ -106,6 +109,59 @@ local function ClickAt(x, y)
         task.wait(0.05)
         VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
     end)
+end
+
+local function IsFullyVisible(obj)
+    local p = obj
+    while p and p ~= game do
+        if p:IsA("GuiObject") and not p.Visible then return false end
+        if p:IsA("LayerCollector") then break end
+        p = p.Parent
+    end
+    return true
+end
+
+local function ReadQuestProgress()
+    local pg = LP:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local best = nil
+    local bestCur = -1
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui.Name ~= "BinQuest" and gui:IsA("ScreenGui") then
+            for _, obj in ipairs(gui:GetDescendants()) do
+                if obj:IsA("TextLabel") and IsFullyVisible(obj) then
+                    local t = obj.Text or ""
+                    t = string.gsub(t, "^%s+", "")
+                    t = string.gsub(t, "%s+$", "")
+                    local cur, req = string.match(t, "^(%d+)%s*/%s*(%d+)$")
+                    if cur and req then
+                        local c = tonumber(cur)
+                        local r = tonumber(req)
+                        if c and r and r >= 2 and r <= 30 and c <= r then
+                            if c > bestCur then
+                                bestCur = c
+                                best = {cur = c, req = r}
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if best then return best.cur, best.req end
+    return nil, nil
+end
+
+local function RefreshUI()
+    local c, r = ReadQuestProgress()
+    if c and r then
+        State.UICurrent = c
+        State.UIRequired = r
+        State.UIFound = true
+        return true
+    end
+    State.UIFound = false
+    return false
 end
 
 local function ScaleMobUp(mob)
@@ -553,6 +609,21 @@ local function StopCycle()
     end
 end
 
+local function TakeQuestAtNPC(s)
+    Log("полёт к квестодателю")
+    FlyTo(s.tpPos)
+    task.wait(0.3)
+    for i, clk in ipairs(s.clicks) do
+        if not State.Running then return false end
+        if not Alive() then return false end
+        Log("клик "..i.."/"..#s.clicks.." ("..clk[1]..","..clk[2]..")")
+        ClickAt(clk[1], clk[2])
+        if i < #s.clicks then task.wait(CLICK_DELAY) end
+    end
+    task.wait(1.5)
+    return true
+end
+
 local function StartSelected()
     if not State.SelectedSection then Log("не выбрана секция"); return end
     StopCycle()
@@ -561,6 +632,9 @@ local function StartSelected()
     State.ActiveSection = s
     State.Running = true
     State.Killed = 0
+    State.UICurrent = 0
+    State.UIRequired = 0
+    State.UIFound = false
     if UI.startBtn then
         UI.startBtn.Text = "⏹   СТОП"
         UI.startBtn.BackgroundColor3 = COLORS.bgStop
@@ -586,38 +660,88 @@ local function StartSelected()
                 Log("ожил, оружие: "..State.WeaponName)
             end
 
-            Log("полёт к квестодателю")
-            FlyTo(s.tpPos)
-            task.wait(0.3)
-            for i, clk in ipairs(s.clicks) do
-                if not State.Running then break end
-                if not Alive() then break end
-                Log("клик "..i.."/"..#s.clicks.." ("..clk[1]..","..clk[2]..")")
-                ClickAt(clk[1], clk[2])
-                if i < #s.clicks then task.wait(CLICK_DELAY) end
+            if not TakeQuestAtNPC(s) then
+                task.wait(1); continue
             end
-            task.wait(1.5)
 
-            State.Killed = 0
-            Log("квест взят, счётчик = 0")
+            State.UICurrent = 0
+            State.UIRequired = 0
+            State.UIFound = false
+
+            Log("ждём UI на "..s.killTarget.."...")
+            local t0 = tick()
+            local uiOK = false
+            while tick() - t0 < 20 do
+                if not State.Running then break end
+                RefreshUI()
+                if State.UIFound and State.UIRequired == s.killTarget then
+                    uiOK = true
+                    Log("UI готов: "..State.UICurrent.."/"..State.UIRequired)
+                    break
+                end
+                task.wait(0.4)
+            end
+
+            if not uiOK then
+                Log("⚠️ UI не подтверждён — fallback")
+                State.Killed = 0
+            else
+                State.Killed = State.UICurrent
+            end
+
+            local lastKilled = State.Killed
+            local stuckCount = 0
+            local loopStart = tick()
 
             while State.Running and State.ActiveSection == s do
                 if not Alive() then break end
-                if State.Killed >= s.killTarget then
-                    Log("✅ выполнен: "..State.Killed.."/"..s.killTarget)
+                if tick() - loopStart > 300 then
+                    Log("⏱ лимит, выходим")
                     break
                 end
-                Log("убиваю "..(State.Killed+1).."/"..s.killTarget.." ("..State.WeaponName..")")
+
+                RefreshUI()
+
+                if State.UIFound and State.UIRequired == s.killTarget then
+                    if State.UICurrent >= State.UIRequired then
+                        Log("✅ UI: "..State.UICurrent.."/"..State.UIRequired)
+                        break
+                    end
+                else
+                    if State.Killed >= s.killTarget then
+                        Log("✅ свой: "..State.Killed.."/"..s.killTarget)
+                        break
+                    end
+                end
+
+                if State.UICurrent == lastKilled and State.Killed == lastKilled then
+                    stuckCount = stuckCount + 1
+                    if stuckCount > 40 then
+                        Log("⚠️ застревание — выходим")
+                        break
+                    end
+                else
+                    stuckCount = 0
+                    lastKilled = math.max(State.UICurrent, State.Killed)
+                end
+
+                local uiInfo = State.UIFound and (State.UICurrent.."/"..State.UIRequired) or "нет"
+                Log("убиваю | UI: "..uiInfo.." | свой: "..State.Killed)
+
                 if KillOneMob(s) then
                     State.Killed = State.Killed + 1
-                    task.wait(0.8)
+                    task.wait(1.2)
+                    RefreshUI()
+                    if State.UIFound and State.UICurrent > State.Killed then
+                        State.Killed = State.UICurrent
+                    end
                 else
                     Log("жду моба...")
                     task.wait(1)
                 end
                 task.wait(0.3)
             end
-            task.wait(0.5)
+            task.wait(1)
         end
     end)
 end
@@ -651,7 +775,7 @@ local function CreateUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -50, 1, 0); title.Position = UDim2.new(0, 15, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "⚡  БИН — АВТО КВЕСТ v49"
+    title.Text = "⚡  БИН — АВТО КВЕСТ v54"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 15
     title.TextXAlignment = Enum.TextXAlignment.Left
@@ -1021,7 +1145,7 @@ local function CreateUI()
 
     MakeSlider("⚡ Скорость полёта", 2, "FlySpeed", 50, 500, 10)
     MakeSlider("📏 Высота над мобом", 3, "SafeHeight", 3, 40, 1)
-    MakeSlider("🐘 Размер моба (x)", 4, "MobScale", 1, 6, 0.5)
+    MakeSlider("🐘 Размер моба (x)", 4, "MobScale", 1, 8, 0.5)
     MakeSlider("📦 Размер хитбокса", 5, "HitboxSize", 40, 500, 20)
 
     local function SelectTab(n)
@@ -1039,7 +1163,10 @@ local function CreateUI()
     task.spawn(function()
         while gui.Parent do
             if State.Running and State.ActiveSection then
-                status.Text = "⚔️ "..State.ActiveSection.name.." — "..State.Killed.."/"..State.ActiveSection.killTarget
+                local uiInfo = State.UIFound
+                    and ("UI: "..State.UICurrent.."/"..State.UIRequired)
+                    or "UI: нет"
+                status.Text = "⚔️ "..State.ActiveSection.name.." | "..uiInfo.." | свой: "..State.Killed
                 status.TextColor3 = Color3.fromRGB(180, 255, 180)
             elseif State.FlyActive then
                 status.Text = "✈️ Свободный полёт"
@@ -1056,7 +1183,6 @@ local function CreateUI()
         end
     end)
 
-    --// ДРАГ — работает с любого "непустого" места
     local dragging, ds, sp
     local function startDrag(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -1080,17 +1206,10 @@ local function CreateUI()
         end
     end
 
-    -- Драг с нескольких элементов
     titleBar.InputBegan:Connect(startDrag)
     title.InputBegan:Connect(startDrag)
     tb.InputBegan:Connect(startDrag)
     main.InputBegan:Connect(startDrag)
-    tabsFrame.InputBegan:Connect(function(input)
-        -- только если клик по пустому месту tabsFrame (не на кнопке)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            startDrag(input)
-        end
-    end)
 
     UserInputService.InputChanged:Connect(updateDrag)
     UserInputService.InputEnded:Connect(endDrag)
@@ -1099,8 +1218,8 @@ end
 CreateUI()
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "⚡ БИН v49",
-        Text = "GUI теперь двигается с любого места",
+        Title = "⚡ БИН v54",
+        Text = "Хитбокс 60, моб x6, высота 12",
         Duration = 4,
     })
 end)

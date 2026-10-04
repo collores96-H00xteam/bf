@@ -1,10 +1,11 @@
 --[[
-    BIN'S QUEST — v67
-    • АВТО-МАСШТАБ кликов под любое разрешение экрана
-    • ЖИВОЙ ОВЕРЛЕЙ КООРДИНАТ (Player / Mouse / World)
-    • КНОПКА «ТП ПОД МЫШЬ»
-    • ПЕРЕКЛЮЧАТЕЛЬ РАЗРЕШЕНИЯ КЛИКОВ (1400x1400 / 1900x1900)
-    • Для 1900x1900 квест «Пиратская деревня → Пираты» кликает по своим кордам
+    BIN'S QUEST — v73
+    • ФИКС свечения сундуков (MaxParts 5000, скан 0.5с, добор из State)
+    • ESPDistance по умолчанию 2000
+    • Блокнот координат на Z
+    • Сундуки: 4 точки, 50мс на точке
+    • Свободный полёт на F
+    • Оптимизация GetPartBoundsInRadius
 ]]
 
 local Players             = game:GetService("Players")
@@ -18,17 +19,41 @@ local TweenService        = game:GetService("TweenService")
 local LP = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
---// БАЗОВОЕ РАЗРЕШЕНИЕ (переключается в настройках)
-local BASE_WIDTH  = 1400
-local BASE_HEIGHT = 1400
+local BASE_WIDTH  = 1440
+local BASE_HEIGHT = 900
 
-local RESOLUTION_PRESETS = {
-    ["1400x1400"] = {w = 1400, h = 1400},
-    ["1900x1900"] = {w = 1900, h = 1900},
+local CHEST_ROUTE = {
+    Vector3.new(1117, 18, 1322),
+    Vector3.new(932, 15, 1376),
+    Vector3.new(1297, 15, 1511),
+    Vector3.new(-624, 9, 1403),
+	Vector3.new(-871, 85, 1633),
+	Vector3.new(-1229, 0, 1890),
+	Vector3.new(-329, 0, 1646),
+	Vector3.new(-2564, 5, 1938),
+	Vector3.new(-2622, 32, 1904),
+	Vector3.new(-2833, 4, 5492),
+	Vector3.new(-1344, 65, 3843),
+	Vector3.new(-1080, 27, 3921),
+	Vector3.new(-987, 27, 4067),
+	Vector3.new(-1103, 52, 4175),
+	Vector3.new(830, 6, 4475),
+	Vector3.new(1388, 1, 4248),
+	Vector3.new(1191, 15, 4552),
+	Vector3.new(1192, 13, 4552),
+	Vector3.new(752, 12, 4314),
+	Vector3.new(1222, 69, -1221),
+	Vector3.new(1249, 45, -1240),
+	Vector3.new(-1423, 152, -3268),
+	Vector3.new(-1865, 184, -3450),
+	Vector3.new(-2018, 152, -2916),
+	Vector3.new(-1748, 30, 346),
+	Vector3.new(-1713, 20, 175),
+	Vector3.new(-2796, 86, 2304),
+	Vector3.new(-3167, 217, 2022),
 }
 
 local Config = {
-    ResolutionPreset = "1400x1400",
     FlySpeed    = 200,
     SafeHeight  = 12,
     MobScale    = 6,
@@ -36,13 +61,13 @@ local Config = {
     AutoFarm    = false,
     FarmRadius  = 150,
     ChestFarmEnabled = false,
-    ChestStartPos    = Vector3.new(1296, 14, 1513),
+    ChestStartPos    = CHEST_ROUTE[1],
     ESPEnabled  = false,
     ESPMobs     = true,
     ESPBosses   = true,
     ESPPlayers  = false,
     ESPNames    = true,
-    ESPDistance = 500,
+    ESPDistance = 2000,
     ESPColor    = Color3.fromRGB(180, 60, 60),
     ESPBossColor= Color3.fromRGB(255, 100, 40),
     ESPPlayerColor = Color3.fromRGB(80, 150, 255),
@@ -55,6 +80,7 @@ local KILL_TIMEOUT  = 20
 local CLICK_DELAY   = 1.2
 local RESPAWN_WAIT  = 3
 local EQUIP_TIMEOUT = 15
+local CHEST_WAIT    = 0.05 -- 50 мс
 
 local SavedCoords = {
     {name = "Пиратский остров", x = 1108, y = 15, z = 1448},
@@ -95,8 +121,6 @@ local EXCLUDE_KEYWORDS = {
     "guard", "blacksmith", "smith", "bartender",
 }
 
-local CHEST_NAMES = {"Chest1", "Check1", "FreshieCheck", "Chest", "Check"}
-
 local QUESTS = {
     {id = "pirate", title = "🏴‍☠️  Пиратский остров", sections = {
         {name = "⚔️  Бандиты", tpPos = Vector3.new(1055, 15, 1555),
@@ -122,29 +146,6 @@ local QUESTS = {
     }},
 }
 
---// Клики для секции «Пираты» в зависимости от выбранного разрешения
-local PIRATE_CLICKS_BY_PRESET = {
-    ["1400x1400"] = {{1146, 403}, {1146, 403}, {1056, 474}},
-    ["1900x1900"] = {{1146, 403}, {1433, 447}, {1373, 517}},
-}
-
-local function GetSectionClicks(s)
-    if s.mobName == "pirate" then
-        local preset = Config.ResolutionPreset or "1400x1400"
-        return PIRATE_CLICKS_BY_PRESET[preset] or s.clicks
-    end
-    return s.clicks
-end
-
-local function SetResolutionPreset(name)
-    local preset = RESOLUTION_PRESETS[name]
-    if not preset then return end
-    Config.ResolutionPreset = name
-    BASE_WIDTH  = preset.w
-    BASE_HEIGHT = preset.h
-    print("[BIN] разрешение -> "..name)
-end
-
 local TP_LOCATIONS = {
     {name = "🏴‍☠️  Пиратский остров",  pos = Vector3.new(1108, 15, 1448)},
     {name = "🏙️  Средний город",     pos = Vector3.new(-654, 5, 1578)},
@@ -168,22 +169,23 @@ local State = {
     FlyActive = false,
     WasDead = false,
     UICurrent = 0, UIRequired = 0, UIFound = false,
-    ESPHighlights = {}, ESPIndex = {}, ESPLastScan = 0,
-    ChestESP = {}, ChestESPIndex = {}, ChestLastScan = 0,
+    ESPHighlights = {}, ESPIndex = {}, ESPLastScan = 0, ESPLastTick = 0,
+    ChestESP = {}, ChestESPIndex = {}, ChestLastScan = 0, ChestLastTick = 0,
     FarmRunning = false, FarmKilled = 0,
     ChestRunning = false, ChestCycleCount = 0,
+    ChestRouteIndex = 0,
 }
 local UI = {}
 
+local StopCycle, StopAutoFarm, StopChestFarm, StartFreeFly, StopFreeFly, EnableNoclip, DisableNoclip, StartAutoFarm
+
 --// ============================================================
--- АВТО-МАСШТАБ КЛИКОВ ПОД РАЗРЕШЕНИЕ ЭКРАНА
+-- АВТО-МАСШТАБ КЛИКОВ
 -- ============================================================
 local function GetScreenScale()
     local vp = Camera and Camera.ViewportSize
     if not vp then return 1, 1 end
-    local scaleX = vp.X / BASE_WIDTH
-    local scaleY = vp.Y / BASE_HEIGHT
-    return scaleX, scaleY
+    return vp.X / BASE_WIDTH, vp.Y / BASE_HEIGHT
 end
 
 local function ScaleClick(x, y)
@@ -248,6 +250,34 @@ local function RefreshUI()
     end
     State.UIFound = false
     return false
+end
+
+--// ============================================================
+-- ПРОСТРАНСТВЕННЫЙ ПОИСК (без лагов)
+-- ============================================================
+local searchParams = OverlapParams.new()
+searchParams.FilterType = Enum.RaycastFilterType.Exclude
+searchParams.MaxParts = 5000
+
+local function GetNearbyParts(position, radius)
+    searchParams.FilterDescendantsInstances = {LP.Character}
+    return Workspace:GetPartBoundsInRadius(position, radius, searchParams)
+end
+
+-- Возвращает { [key] = part }, где key — Model или сама BasePart
+local function GetNearbyModels(position, radius)
+    local parts = GetNearbyParts(position, radius)
+    local models = {}
+    for _, part in ipairs(parts) do
+        local model = part:FindFirstAncestorOfClass("Model")
+        if model then
+            if not models[model] then models[model] = part end
+        else
+            -- сундук может быть отдельной BasePart
+            if not models[part] then models[part] = part end
+        end
+    end
+    return models
 end
 
 --// ESP МОБОВ
@@ -340,38 +370,14 @@ local function RemoveESP(model)
     end
 end
 
-local function ScanWorkspaceLight()
-    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return {} end
-    local myPos = myRoot.Position
-    local found = {}
-    local function checkModel(obj)
-        if not obj:IsA("Model") then return end
-        local h = obj:FindFirstChildOfClass("Humanoid")
-        if not h or h.Health <= 0 then return end
-        local nr = obj:FindFirstChild("HumanoidRootPart")
-        if not nr then return end
-        local d = (nr.Position - myPos).Magnitude
-        if d > Config.ESPDistance then return end
-        found[obj] = d
-    end
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if obj:IsA("Model") then checkModel(obj)
-        elseif obj:IsA("Folder") then
-            for _, sub in ipairs(obj:GetChildren()) do
-                if sub:IsA("Model") then checkModel(sub) end
-            end
-        end
-    end
-    return found
-end
-
 local espBusy = false
 local function UpdateESP()
     if not Config.ESPEnabled then
         if #State.ESPHighlights > 0 then ClearESP() end
         return
     end
+    if tick() - State.ESPLastTick < 0.3 then return end
+    State.ESPLastTick = tick()
     for _, data in ipairs(State.ESPHighlights) do
         if data.model and data.model.Parent and data.hpLabel then
             local h = data.model:FindFirstChildOfClass("Humanoid")
@@ -382,7 +388,16 @@ local function UpdateESP()
     if espBusy then return end
     State.ESPLastScan = tick(); espBusy = true
     task.spawn(function()
-        local found = ScanWorkspaceLight()
+        local myRoot = GetRoot()
+        if not myRoot then espBusy = false; return end
+        local models = GetNearbyModels(myRoot.Position, Config.ESPDistance)
+        -- добор живых из State
+        for m, _ in pairs(State.ESPIndex) do
+            if m and m.Parent then
+                local part = m:FindFirstChild("HumanoidRootPart") or m
+                models[m] = part
+            end
+        end
         local toRemove = {}
         for _, data in ipairs(State.ESPHighlights) do
             local m = data.model
@@ -390,11 +405,11 @@ local function UpdateESP()
             else
                 local h = m:FindFirstChildOfClass("Humanoid")
                 if not h or h.Health <= 0 then table.insert(toRemove, m)
-                elseif not found[m] then table.insert(toRemove, m) end
+                elseif not models[m] then table.insert(toRemove, m) end
             end
         end
         for _, m in ipairs(toRemove) do if m then RemoveESP(m) end end
-        for model, _ in pairs(found) do
+        for model, _ in pairs(models) do
             if not State.ESPIndex[model] then
                 local isPlayer = Players:GetPlayerFromCharacter(model)
                 local isBossModel = IsBoss(model)
@@ -416,10 +431,13 @@ RunService.Heartbeat:Connect(UpdateESP)
 --// ESP СУНДУКОВ
 local function IsChest(obj)
     if not obj then return false end
-    for _, n in ipairs(CHEST_NAMES) do
-        if obj.Name == n then return true end
-    end
-    return false
+    if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
+    local n = string.lower(obj.Name)
+    local hasChest = string.find(n, "chest", 1, true) or string.find(n, "check", 1, true)
+    if not hasChest then return false end
+    if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then return false end
+    if string.find(n, "giver", 1, true) or string.find(n, "quest", 1, true) then return false end
+    return true
 end
 
 local function GetChestPart(chest)
@@ -441,7 +459,7 @@ local function CreateChestTag(chest, part, color)
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "BinChestTag"
     billboard.Adornee = part
-    billboard.Size = UDim2.new(0, 130, 0, 46)
+    billboard.Size = UDim2.new(0, 140, 0, 46)
     billboard.StudsOffset = Vector3.new(0, 2, 0)
     billboard.AlwaysOnTop = true
     billboard.MaxDistance = Config.ESPDistance
@@ -482,9 +500,9 @@ local function AddChestESP(chest)
     hl.Name = "BinChestESP"
     hl.Adornee = chest:IsA("Model") and chest or part
     hl.FillColor = Config.ChestESPColor
-    hl.FillTransparency = 0.7
-    hl.OutlineColor = Config.ChestESPColor
-    hl.OutlineTransparency = 0.1
+    hl.FillTransparency = 0.4
+    hl.OutlineColor = Color3.fromRGB(255, 220, 100)
+    hl.OutlineTransparency = 0.0
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     hl.Parent = chest:IsA("Model") and chest or part
     local nametag = nil
@@ -512,33 +530,15 @@ local function RemoveChestESP(chest)
     end
 end
 
-local function ScanChests()
-    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return {} end
-    local myPos = myRoot.Position
-    local found = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if (obj:IsA("Model") or obj:IsA("BasePart")) and IsChest(obj) then
-            local part = GetChestPart(obj)
-            if part then
-                local d = (part.Position - myPos).Magnitude
-                if d <= Config.ESPDistance then
-                    found[obj] = d
-                end
-            end
-        end
-        if #found > 400 then break end
-    end
-    return found
-end
-
 local chestBusy = false
 local function UpdateChestESP()
     if not Config.ChestESPEnabled then
         if #State.ChestESP > 0 then ClearChestESP() end
         return
     end
-    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if tick() - State.ChestLastTick < 0.3 then return end
+    State.ChestLastTick = tick()
+    local myRoot = GetRoot()
     local myPos = myRoot and myRoot.Position
     for _, data in ipairs(State.ChestESP) do
         if data.part and data.part.Parent then
@@ -554,20 +554,30 @@ local function UpdateChestESP()
             end
         end
     end
-    if tick() - State.ChestLastScan < 2 then return end
+    if tick() - State.ChestLastScan < 0.5 then return end
     if chestBusy then return end
     State.ChestLastScan = tick(); chestBusy = true
     task.spawn(function()
-        local found = ScanChests()
+        if not myRoot then chestBusy = false; return end
+        local models = GetNearbyModels(myRoot.Position, Config.ESPDistance)
+        -- добор всего, что уже подсвечено и живо
+        for m, _ in pairs(State.ChestESPIndex) do
+            if m and m.Parent then
+                local part = GetChestPart(m)
+                if part then models[m] = part end
+            end
+        end
         local toRemove = {}
         for _, data in ipairs(State.ChestESP) do
             local m = data.model
             if not m or not m.Parent then table.insert(toRemove, m)
-            elseif not found[m] then table.insert(toRemove, m) end
+            elseif not models[m] then table.insert(toRemove, m) end
         end
         for _, m in ipairs(toRemove) do if m then RemoveChestESP(m) end end
-        for chest, _ in pairs(found) do
-            if not State.ChestESPIndex[chest] then AddChestESP(chest) end
+        for model, _ in pairs(models) do
+            if IsChest(model) and not State.ChestESPIndex[model] then
+                AddChestESP(model)
+            end
         end
         chestBusy = false
     end)
@@ -709,6 +719,7 @@ end
 --// Полёт
 local flyBV, flyBG = nil, nil
 local flyInput = {W = false, A = false, S = false, D = false, Space = false, Shift = false}
+local NoclipConn = nil
 
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
@@ -718,6 +729,23 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if input.KeyCode == Enum.KeyCode.D then flyInput.D = true end
     if input.KeyCode == Enum.KeyCode.Space then flyInput.Space = true end
     if input.KeyCode == Enum.KeyCode.LeftShift then flyInput.Shift = true end
+    if input.KeyCode == Enum.KeyCode.F then
+        if State.FlyActive then
+            StopFreeFly()
+            if UI.flyToggleBtn then
+                UI.flyToggleBtn.Text = "✈ СВОБОДНЫЙ ПОЛЁТ: ВЫКЛ (F)"
+                UI.flyToggleBtn.BackgroundColor3 = COLORS.bgFly
+                UI.flyToggleBtn.TextColor3 = COLORS.textBlue
+            end
+        else
+            StartFreeFly()
+            if UI.flyToggleBtn then
+                UI.flyToggleBtn.Text = "✈ СВОБОДНЫЙ ПОЛЁТ: ВКЛ (F)"
+                UI.flyToggleBtn.BackgroundColor3 = COLORS.bgStart
+                UI.flyToggleBtn.TextColor3 = Color3.fromRGB(230, 255, 230)
+            end
+        end
+    end
 end)
 UserInputService.InputEnded:Connect(function(input)
     if input.KeyCode == Enum.KeyCode.W then flyInput.W = false end
@@ -728,7 +756,7 @@ UserInputService.InputEnded:Connect(function(input)
     if input.KeyCode == Enum.KeyCode.LeftShift then flyInput.Shift = false end
 end)
 
-local function StartFreeFly()
+StartFreeFly = function()
     local r = GetRoot(); if not r or State.FlyActive then return end
     State.FlyActive = true
     flyBV = Instance.new("BodyVelocity")
@@ -739,12 +767,17 @@ local function StartFreeFly()
     flyBG.Name = "BinFreeGyro"
     flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
     flyBG.P = 50000; flyBG.CFrame = r.CFrame; flyBG.Parent = r
+    EnableNoclip()
+    Log("свободный полёт ВКЛ")
 end
-local function StopFreeFly()
+
+StopFreeFly = function()
     State.FlyActive = false
     if flyBV and flyBV.Parent then flyBV:Destroy() end
     if flyBG and flyBG.Parent then flyBG:Destroy() end
     flyBV, flyBG = nil, nil
+    DisableNoclip()
+    Log("свободный полёт ВЫКЛ")
 end
 
 RunService.Heartbeat:Connect(function()
@@ -767,8 +800,7 @@ RunService.Heartbeat:Connect(function()
     flyBG.CFrame = CFrame.new(r.Position, r.Position + cam.LookVector)
 end)
 
-local NoclipConn = nil
-local function EnableNoclip()
+EnableNoclip = function()
     if NoclipConn then return end
     NoclipConn = RunService.Stepped:Connect(function()
         local char = LP.Character; if not char then return end
@@ -777,7 +809,7 @@ local function EnableNoclip()
         end
     end)
 end
-local function DisableNoclip()
+DisableNoclip = function()
     if NoclipConn then NoclipConn:Disconnect(); NoclipConn = nil end
     local char = LP.Character
     if char then
@@ -845,24 +877,37 @@ local function FlyTo(targetPos)
     State.Flying = false
     if r.Parent then r.CFrame = CFrame.new(targetPos); r.Velocity = Vector3.zero end
     task.wait(0.05)
-    DisableNoclip(); RestoreBody()
+    if not State.FlyActive then DisableNoclip() end
+    RestoreBody()
     return true
 end
 
 local function StopFly()
     State.Flying = false
-    ClearFly(); RestoreBody(); DisableNoclip()
+    ClearFly(); RestoreBody()
+    if not State.FlyActive then DisableNoclip() end
 end
 
---// АВТО-СУНДУКИ
-local function StartChestFarm()
+--// АВТО-СУНДУКИ (4 точки, 50мс)
+function StartChestFarm()
     StopCycle(); StopAutoFarm()
     task.wait(0.2)
     State.ChestRunning = true
     State.ChestCycleCount = 0
-    Log("лечу на "..math.floor(Config.ChestStartPos.X)..", "..
-        math.floor(Config.ChestStartPos.Y)..", "..
-        math.floor(Config.ChestStartPos.Z))
+    State.ChestRouteIndex = 0
+    Config.ChestESPEnabled = true
+    Config.ChestESPNametag = true
+    if UI.espToggleChest then
+        UI.espToggleChest.BackgroundColor3 = COLORS.bgStart
+        UI.espToggleChest.Text = "ВКЛ"
+        UI.espToggleChest.TextColor3 = Color3.fromRGB(230, 255, 230)
+    end
+    if UI.espToggleChestName then
+        UI.espToggleChestName.BackgroundColor3 = COLORS.bgStart
+        UI.espToggleChestName.Text = "ВКЛ"
+        UI.espToggleChestName.TextColor3 = Color3.fromRGB(230, 255, 230)
+    end
+    Log("запускаю маршрут сундуков")
     task.spawn(function()
         while State.ChestRunning do
             if not Alive() then
@@ -875,20 +920,40 @@ local function StartChestFarm()
                 EquipWeapon()
             end
             if not State.ChestRunning then break end
-            State.ChestCycleCount = State.ChestCycleCount + 1
-            FlyTo(Config.ChestStartPos)
-            task.wait(3)
-            Log("на позиции, цикл #"..State.ChestCycleCount)
-            task.wait(5)
+            State.ChestRouteIndex = State.ChestRouteIndex + 1
+            if State.ChestRouteIndex > #CHEST_ROUTE then
+                State.ChestRouteIndex = 1
+                State.ChestCycleCount = State.ChestCycleCount + 1
+            end
+            local target = CHEST_ROUTE[State.ChestRouteIndex]
+            Log(string.format("точка %d/%d: %d, %d, %d",
+                State.ChestRouteIndex, #CHEST_ROUTE,
+                math.floor(target.X), math.floor(target.Y), math.floor(target.Z)))
+            FlyTo(target)
+            task.wait(CHEST_WAIT)
+            if not State.ChestRunning then break end
         end
     end)
 end
 
-local function StopChestFarm()
+StopChestFarm = function()
     if State.ChestRunning then
         State.ChestRunning = false
         Config.ChestFarmEnabled = false
         StopFly()
+        Config.ChestESPEnabled = false
+        Config.ChestESPNametag = false
+        ClearChestESP()
+        if UI.espToggleChest then
+            UI.espToggleChest.BackgroundColor3 = Color3.fromRGB(45, 30, 30)
+            UI.espToggleChest.Text = "ВЫКЛ"
+            UI.espToggleChest.TextColor3 = Color3.fromRGB(180, 140, 140)
+        end
+        if UI.espToggleChestName then
+            UI.espToggleChestName.BackgroundColor3 = Color3.fromRGB(45, 30, 30)
+            UI.espToggleChestName.Text = "ВЫКЛ"
+            UI.espToggleChestName.TextColor3 = Color3.fromRGB(180, 140, 140)
+        end
         if UI.chestBtn then
             UI.chestBtn.Text = "АВТО-СУНДУКИ: ВЫКЛ"
             UI.chestBtn.BackgroundColor3 = COLORS.bgChest
@@ -900,18 +965,12 @@ end
 --// АВТО-ФАРМ
 local function FindNearestMobAny()
     local r = GetRoot(); if not r then return nil end
-    local pos = r.Position
+    local models = GetNearbyModels(r.Position, Config.FarmRadius)
     local near, shortest = nil, Config.FarmRadius
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            local h = obj:FindFirstChildOfClass("Humanoid")
-            local nr = obj:FindFirstChild("HumanoidRootPart")
-            if h and h.Health > 0 and nr then
-                if IsMob(obj) then
-                    local d = (nr.Position - pos).Magnitude
-                    if d < shortest then shortest = d; near = obj end
-                end
-            end
+    for model, part in pairs(models) do
+        if IsMob(model) then
+            local d = (part.Position - r.Position).Magnitude
+            if d < shortest then shortest = d; near = model end
         end
     end
     return near
@@ -985,28 +1044,26 @@ local function FindMob(mobName, noBoss)
     local r = GetRoot(); if not r then return nil end
     local pos = r.Position
     local mobLower = string.lower(mobName)
+    local models = GetNearbyModels(pos, 500)
     local near, shortest = nil, math.huge
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            local h = obj:FindFirstChildOfClass("Humanoid")
-            local nr = obj:FindFirstChild("HumanoidRootPart")
-            if h and h.Health > 0 and nr then
-                local n = string.lower(obj.Name)
-                if string.find(n, mobLower, 1, true) then
-                    local isExcluded = false
-                    for _, kw in ipairs(EXCLUDE_KEYWORDS) do
+    for model, part in pairs(models) do
+        local h = model:FindFirstChildOfClass("Humanoid")
+        if h and h.Health > 0 then
+            local n = string.lower(model.Name)
+            if string.find(n, mobLower, 1, true) then
+                local isExcluded = false
+                for _, kw in ipairs(EXCLUDE_KEYWORDS) do
+                    if string.find(n, kw, 1, true) then isExcluded = true; break end
+                end
+                if not isExcluded and IsInteractiveNPC(model) then isExcluded = true end
+                if not isExcluded and noBoss then
+                    for _, kw in ipairs(BOSS_KEYWORDS) do
                         if string.find(n, kw, 1, true) then isExcluded = true; break end
                     end
-                    if not isExcluded and IsInteractiveNPC(obj) then isExcluded = true end
-                    if not isExcluded and noBoss then
-                        for _, kw in ipairs(BOSS_KEYWORDS) do
-                            if string.find(n, kw, 1, true) then isExcluded = true; break end
-                        end
-                    end
-                    if not isExcluded then
-                        local d = (nr.Position - pos).Magnitude
-                        if d < shortest then shortest = d; near = obj end
-                    end
+                end
+                if not isExcluded then
+                    local d = (part.Position - pos).Magnitude
+                    if d < shortest then shortest = d; near = model end
                 end
             end
         end
@@ -1020,7 +1077,7 @@ local function KillOneMob(section)
     return KillMob(mob)
 end
 
-local function StartAutoFarm()
+StartAutoFarm = function()
     StopCycle(); StopChestFarm()
     task.wait(0.2)
     State.FarmRunning = true
@@ -1045,7 +1102,7 @@ local function StartAutoFarm()
     end)
 end
 
-local function StopAutoFarm()
+StopAutoFarm = function()
     if State.FarmRunning then
         State.FarmRunning = false
         Config.AutoFarm = false
@@ -1059,26 +1116,13 @@ local function StopAutoFarm()
 end
 
 --// КВЕСТ-ЦИКЛ
-local function StopCycle()
-    if State.Running then
-        State.Running = false
-        State.ActiveSection = nil
-        StopFly(); RestoreAllMobs(); RestoreAllHitboxes()
-        if UI.startBtn then
-            UI.startBtn.Text = "СТАРТ КВЕСТ"
-            UI.startBtn.BackgroundColor3 = COLORS.bgStart
-        end
-    end
-end
-
 local function TakeQuestAtNPC(s)
     FlyTo(s.tpPos); task.wait(0.3)
-    local clicks = GetSectionClicks(s)
-    for i, clk in ipairs(clicks) do
+    for i, clk in ipairs(s.clicks) do
         if not State.Running then return false end
         if not Alive() then return false end
         ClickAt(clk[1], clk[2])
-        if i < #clicks then task.wait(CLICK_DELAY) end
+        if i < #s.clicks then task.wait(CLICK_DELAY) end
     end
     task.wait(1.5)
     return true
@@ -1147,6 +1191,18 @@ local function StartSelected()
             task.wait(1)
         end
     end)
+end
+
+StopCycle = function()
+    if State.Running then
+        State.Running = false
+        State.ActiveSection = nil
+        StopFly(); RestoreAllMobs(); RestoreAllHitboxes()
+        if UI.startBtn then
+            UI.startBtn.Text = "СТАРТ КВЕСТ"
+            UI.startBtn.BackgroundColor3 = COLORS.bgStart
+        end
+    end
 end
 
 --// ============================================================
@@ -1231,7 +1287,10 @@ local function CreateLiveOverlay()
         end
     end)
 
+    local lastOverlayUpdate = 0
     RunService.RenderStepped:Connect(function()
+        if tick() - lastOverlayUpdate < 0.1 then return end
+        lastOverlayUpdate = tick()
         local char = LP.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hrp then
@@ -1240,10 +1299,8 @@ local function CreateLiveOverlay()
         else
             playerCoordLabel.Text = "Player: нет персонажа"
         end
-
         local mousePos = UserInputService:GetMouseLocation()
         mouseCoordLabel.Text = string.format("Mouse: %d, %d", mousePos.X, mousePos.Y)
-
         local camera = Workspace.CurrentCamera
         if camera then
             local unitRay = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
@@ -1288,7 +1345,7 @@ local function CreateUI()
 
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -55, 1, 0); title.Position = UDim2.new(0, 18, 0, 0)
-    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v67"
+    title.BackgroundTransparency = 1; title.Text = "BIN QUEST v73"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left; title.Active = true
@@ -1516,7 +1573,7 @@ local function CreateUI()
     chestPage.BackgroundTransparency = 1; chestPage.Visible = false; chestPage.Parent = main
 
     local chestBtn = Instance.new("TextButton")
-    chestBtn.Size = UDim2.new(1, -6, 0, 55)
+    chestBtn.Size = UDim2.new(1, -6, 0, 50)
     chestBtn.BackgroundColor3 = COLORS.bgChest
     chestBtn.Text = "АВТО-СУНДУКИ: ВЫКЛ"
     chestBtn.TextColor3 = COLORS.textPurple
@@ -1541,10 +1598,10 @@ local function CreateUI()
     end)
 
     local chestInfo = Instance.new("TextLabel")
-    chestInfo.Size = UDim2.new(1, -6, 0, 100)
-    chestInfo.Position = UDim2.new(0, 3, 0, 65)
+    chestInfo.Size = UDim2.new(1, -6, 0, 140)
+    chestInfo.Position = UDim2.new(0, 3, 0, 60)
     chestInfo.BackgroundColor3 = COLORS.bgPanel
-    chestInfo.Text = "Лечу на координаты:\n1296, 14, 1513\n\nВключи ESP-сундуки\nво вкладке ESP для подсветки."
+    chestInfo.Text = "Маршрут по кругу (50мс на точке):\n1) 1117, 18, 1322\n2) 932, 15, 1376\n3) 1297, 15, 1511\n4) -624, 9, 1403\n\nСвечение сундуков включается\nавтоматически при старте."
     chestInfo.TextColor3 = COLORS.textDim
     chestInfo.Font = Enum.Font.Gotham; chestInfo.TextSize = 11
     chestInfo.TextXAlignment = Enum.TextXAlignment.Center
@@ -1554,9 +1611,9 @@ local function CreateUI()
 
     local chestStats = Instance.new("TextLabel")
     chestStats.Size = UDim2.new(1, -6, 0, 30)
-    chestStats.Position = UDim2.new(0, 3, 0, 175)
+    chestStats.Position = UDim2.new(0, 3, 0, 210)
     chestStats.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
-    chestStats.Text = "циклов: 0"
+    chestStats.Text = "кругов: 0  •  точка: 0/4"
     chestStats.TextColor3 = COLORS.textPurple
     chestStats.Font = Enum.Font.GothamBold; chestStats.TextSize = 11
     chestStats.Parent = chestPage
@@ -1569,7 +1626,7 @@ local function CreateUI()
     coordPage.BackgroundTransparency = 1; coordPage.Visible = false; coordPage.Parent = main
 
     local coordTitle = Instance.new("TextLabel")
-    coordTitle.Size = UDim2.new(1, -6, 0, 22); coordTitle.Position = UDim2.new(0, 3, 0, 0)
+    coordTitle.Size = UDim2.new(1, -6, 0, 20); coordTitle.Position = UDim2.new(0, 3, 0, 0)
     coordTitle.BackgroundTransparency = 1
     coordTitle.Text = "ВВОД КООРДИНАТ"
     coordTitle.TextColor3 = COLORS.textDim
@@ -1578,8 +1635,8 @@ local function CreateUI()
 
     local function MakeInput(placeholder, posX, width)
         local box = Instance.new("TextBox")
-        box.Size = UDim2.new(width, 0, 0, 40)
-        box.Position = UDim2.new(posX, 0, 0, 28)
+        box.Size = UDim2.new(width, 0, 0, 36)
+        box.Position = UDim2.new(posX, 0, 0, 22)
         box.BackgroundColor3 = COLORS.bgInput
         box.BorderSizePixel = 0; box.Text = ""
         box.PlaceholderText = placeholder
@@ -1598,8 +1655,8 @@ local function CreateUI()
     local inputZ = MakeInput("Z", 0.67, 0.32)
 
     local flyBtn = Instance.new("TextButton")
-    flyBtn.Size = UDim2.new(1, -6, 0, 46)
-    flyBtn.Position = UDim2.new(0, 3, 0, 78)
+    flyBtn.Size = UDim2.new(1, -6, 0, 42)
+    flyBtn.Position = UDim2.new(0, 3, 0, 66)
     flyBtn.BackgroundColor3 = COLORS.bgFly
     flyBtn.Text = "✈  ЛЕТЕТЬ ПО КООРДИНАТАМ"
     flyBtn.TextColor3 = COLORS.textBlue
@@ -1632,8 +1689,8 @@ local function CreateUI()
     end)
 
     local saveBtn = Instance.new("TextButton")
-    saveBtn.Size = UDim2.new(0.49, -3, 0, 34)
-    saveBtn.Position = UDim2.new(0.01, 0, 0, 130)
+    saveBtn.Size = UDim2.new(0.49, -3, 0, 32)
+    saveBtn.Position = UDim2.new(0.01, 0, 0, 112)
     saveBtn.BackgroundColor3 = COLORS.bgSelect
     saveBtn.Text = "💾 СОХРАНИТЬ"
     saveBtn.TextColor3 = Color3.fromRGB(200, 230, 200)
@@ -1642,8 +1699,8 @@ local function CreateUI()
     Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 10)
 
     local myPosBtn = Instance.new("TextButton")
-    myPosBtn.Size = UDim2.new(0.49, -3, 0, 34)
-    myPosBtn.Position = UDim2.new(0.5, 0, 0, 130)
+    myPosBtn.Size = UDim2.new(0.49, -3, 0, 32)
+    myPosBtn.Position = UDim2.new(0.5, 0, 0, 112)
     myPosBtn.BackgroundColor3 = COLORS.bgAccent
     myPosBtn.Text = "📍 МОЯ ПОЗИЦИЯ"
     myPosBtn.TextColor3 = COLORS.textAccent
@@ -1661,8 +1718,8 @@ local function CreateUI()
     end)
 
     local tpMouseBtn = Instance.new("TextButton")
-    tpMouseBtn.Size = UDim2.new(1, -6, 0, 34)
-    tpMouseBtn.Position = UDim2.new(0, 3, 0, 170)
+    tpMouseBtn.Size = UDim2.new(1, -6, 0, 32)
+    tpMouseBtn.Position = UDim2.new(0, 3, 0, 148)
     tpMouseBtn.BackgroundColor3 = Color3.fromRGB(60, 40, 80)
     tpMouseBtn.Text = "🖱  ТП ПОД МЫШЬ"
     tpMouseBtn.TextColor3 = Color3.fromRGB(220, 180, 255)
@@ -1673,15 +1730,6 @@ local function CreateUI()
     Instance.new("UICorner", tpMouseBtn).CornerRadius = UDim.new(0, 10)
     local tpMouseStroke = Instance.new("UIStroke", tpMouseBtn)
     tpMouseStroke.Color = Color3.fromRGB(130, 90, 180); tpMouseStroke.Thickness = 1; tpMouseStroke.Transparency = 0.4
-
-    tpMouseBtn.MouseEnter:Connect(function()
-        TweenService:Create(tpMouseBtn, TweenInfo.new(0.15),
-            {BackgroundColor3 = Color3.fromRGB(90, 60, 120)}):Play()
-    end)
-    tpMouseBtn.MouseLeave:Connect(function()
-        TweenService:Create(tpMouseBtn, TweenInfo.new(0.15),
-            {BackgroundColor3 = Color3.fromRGB(60, 40, 80)}):Play()
-    end)
 
     tpMouseBtn.MouseButton1Click:Connect(function()
         local mousePos = UserInputService:GetMouseLocation()
@@ -1709,8 +1757,37 @@ local function CreateUI()
         end
     end)
 
+    local flyToggleBtn = Instance.new("TextButton")
+    flyToggleBtn.Size = UDim2.new(1, -6, 0, 32)
+    flyToggleBtn.Position = UDim2.new(0, 3, 0, 184)
+    flyToggleBtn.BackgroundColor3 = COLORS.bgFly
+    flyToggleBtn.Text = "✈ СВОБОДНЫЙ ПОЛЁТ: ВЫКЛ (F)"
+    flyToggleBtn.TextColor3 = COLORS.textBlue
+    flyToggleBtn.Font = Enum.Font.GothamBold
+    flyToggleBtn.TextSize = 12
+    flyToggleBtn.AutoButtonColor = false
+    flyToggleBtn.Parent = coordPage
+    Instance.new("UICorner", flyToggleBtn).CornerRadius = UDim.new(0, 10)
+    local flyToggleStroke = Instance.new("UIStroke", flyToggleBtn)
+    flyToggleStroke.Color = Color3.fromRGB(80, 120, 180); flyToggleStroke.Thickness = 1; flyToggleStroke.Transparency = 0.4
+    UI.flyToggleBtn = flyToggleBtn
+
+    flyToggleBtn.MouseButton1Click:Connect(function()
+        if State.FlyActive then
+            StopFreeFly()
+            flyToggleBtn.Text = "✈ СВОБОДНЫЙ ПОЛЁТ: ВЫКЛ (F)"
+            flyToggleBtn.BackgroundColor3 = COLORS.bgFly
+            flyToggleBtn.TextColor3 = COLORS.textBlue
+        else
+            StartFreeFly()
+            flyToggleBtn.Text = "✈ СВОБОДНЫЙ ПОЛЁТ: ВКЛ (F)"
+            flyToggleBtn.BackgroundColor3 = COLORS.bgStart
+            flyToggleBtn.TextColor3 = Color3.fromRGB(230, 255, 230)
+        end
+    end)
+
     local savedTitle = Instance.new("TextLabel")
-    savedTitle.Size = UDim2.new(1, -6, 0, 20); savedTitle.Position = UDim2.new(0, 3, 0, 210)
+    savedTitle.Size = UDim2.new(1, -6, 0, 18); savedTitle.Position = UDim2.new(0, 3, 0, 222)
     savedTitle.BackgroundTransparency = 1
     savedTitle.Text = "СОХРАНЁННЫЕ ТОЧКИ"
     savedTitle.TextColor3 = COLORS.textDim
@@ -1718,8 +1795,8 @@ local function CreateUI()
     savedTitle.Parent = coordPage
 
     local savedScroll = Instance.new("ScrollingFrame")
-    savedScroll.Size = UDim2.new(1, -6, 0, 220)
-    savedScroll.Position = UDim2.new(0, 3, 0, 233)
+    savedScroll.Size = UDim2.new(1, -6, 0, 195)
+    savedScroll.Position = UDim2.new(0, 3, 0, 244)
     savedScroll.BackgroundTransparency = 1; savedScroll.BorderSizePixel = 0
     savedScroll.ScrollBarThickness = 3; savedScroll.ScrollBarImageColor3 = COLORS.bgAccent
     savedScroll.CanvasSize = UDim2.new(0, 0, 0, 500); savedScroll.Parent = coordPage
@@ -1884,8 +1961,8 @@ local function CreateUI()
     MakeToggleRow("Боссы", 3, "ESPBosses", "ВКЛ", "ВЫКЛ", espScroll)
     MakeToggleRow("Игроки", 4, "ESPPlayers", "ВКЛ", "ВЫКЛ", espScroll)
     MakeToggleRow("Ники мобов", 5, "ESPNames", "ВКЛ", "ВЫКЛ", espScroll)
-    MakeToggleRow("ESP сундуков", 6, "ChestESPEnabled", "ВКЛ", "ВЫКЛ", espScroll)
-    MakeToggleRow("Ники сундуков + коорд", 7, "ChestESPNametag", "ВКЛ", "ВЫКЛ", espScroll)
+    UI.espToggleChest = MakeToggleRow("ESP сундуков", 6, "ChestESPEnabled", "ВКЛ", "ВЫКЛ", espScroll)
+    UI.espToggleChestName = MakeToggleRow("Ники сундуков + коорд", 7, "ChestESPNametag", "ВКЛ", "ВЫКЛ", espScroll)
 
     -- НАСТР
     local cfgPage = Instance.new("Frame")
@@ -1897,7 +1974,7 @@ local function CreateUI()
     cfgScroll.Size = UDim2.new(1, 0, 1, 0)
     cfgScroll.BackgroundTransparency = 1; cfgScroll.BorderSizePixel = 0
     cfgScroll.ScrollBarThickness = 3; cfgScroll.ScrollBarImageColor3 = COLORS.bgAccent
-    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 600); cfgScroll.Parent = cfgPage
+    cfgScroll.CanvasSize = UDim2.new(0, 0, 0, 500); cfgScroll.Parent = cfgPage
     local cfgl = Instance.new("UIListLayout", cfgScroll)
     cfgl.Padding = UDim.new(0, 8); cfgl.SortOrder = Enum.SortOrder.LayoutOrder
 
@@ -1917,83 +1994,12 @@ local function CreateUI()
             local vp = Camera and Camera.ViewportSize
             if vp then
                 local sx, sy = GetScreenScale()
-                resInfo.Text = string.format("Экран: %dx%d\nКлики: %dx%d  Масштаб: %.2fx / %.2fx",
+                resInfo.Text = string.format("Экран: %dx%d\nБаза: %dx%d  Масштаб: %.2fx / %.2fx",
                     vp.X, vp.Y, BASE_WIDTH, BASE_HEIGHT, sx, sy)
             end
-            task.wait(0.5)
+            task.wait(1)
         end
     end)
-
-    -- === ВЫБОР РАЗРЕШЕНИЯ КЛИКОВ ===
-    local resRow = Instance.new("Frame")
-    resRow.Size = UDim2.new(1, -6, 0, 56)
-    resRow.BackgroundColor3 = COLORS.bgPanel
-    resRow.BorderSizePixel = 0
-    resRow.LayoutOrder = 0
-    resRow.Parent = cfgScroll
-    Instance.new("UICorner", resRow).CornerRadius = UDim.new(0, 14)
-    local rsStroke = Instance.new("UIStroke", resRow)
-    rsStroke.Color = COLORS.stroke; rsStroke.Thickness = 1; rsStroke.Transparency = 0.5
-
-    local resLbl = Instance.new("TextLabel")
-    resLbl.Size = UDim2.new(1, -20, 0, 18)
-    resLbl.Position = UDim2.new(0, 14, 0, 5)
-    resLbl.BackgroundTransparency = 1
-    resLbl.Text = "Разрешение кликов"
-    resLbl.TextColor3 = COLORS.text
-    resLbl.Font = Enum.Font.GothamBold
-    resLbl.TextSize = 12
-    resLbl.TextXAlignment = Enum.TextXAlignment.Left
-    resLbl.Parent = resRow
-
-    local resBtnHolder = Instance.new("Frame")
-    resBtnHolder.Size = UDim2.new(1, -12, 0, 28)
-    resBtnHolder.Position = UDim2.new(0, 6, 0, 24)
-    resBtnHolder.BackgroundTransparency = 1
-    resBtnHolder.Parent = resRow
-
-    local resButtons = {}
-    local function RefreshResButtons()
-        for name, btn in pairs(resButtons) do
-            if Config.ResolutionPreset == name then
-                btn.BackgroundColor3 = COLORS.bgStart
-                btn.TextColor3 = Color3.fromRGB(230, 255, 230)
-                btn.Text = "● "..name
-            else
-                btn.BackgroundColor3 = COLORS.bgAccent
-                btn.TextColor3 = COLORS.text
-                btn.Text = "○ "..name
-            end
-        end
-    end
-
-    for idx, name in ipairs({"1400x1400", "1900x1900"}) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.485, 0, 1, 0)
-        btn.Position = UDim2.new((idx-1)*0.51 + 0.005, 0, 0, 0)
-        btn.BackgroundColor3 = COLORS.bgAccent
-        btn.Text = "○ "..name
-        btn.TextColor3 = COLORS.text
-        btn.Font = Enum.Font.GothamBold
-        btn.TextSize = 11
-        btn.AutoButtonColor = false
-        btn.Parent = resBtnHolder
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
-        btn.MouseButton1Click:Connect(function()
-            SetResolutionPreset(name)
-            RefreshResButtons()
-            pcall(function()
-                StarterGui:SetCore("SendNotification", {
-                    Title = "Разрешение",
-                    Text = "Выбрано: "..name,
-                    Duration = 3,
-                })
-            end)
-        end)
-        resButtons[name] = btn
-    end
-
-    RefreshResButtons()
 
     local function MakeSlider(label, order, key, min, max, step, color)
         local row = Instance.new("Frame")
@@ -2053,7 +2059,8 @@ local function CreateUI()
         return val
     end
 
-    MakeSlider("Радиус фарма мобов", 1, "FarmRadius", 20, 500, 10, Color3.fromRGB(140, 90, 50))
+    MakeSlider("Радиус фарма мобов", 0, "FarmRadius", 20, 500, 10, Color3.fromRGB(140, 90, 50))
+    MakeSlider("Дистанция ESP", 1, "ESPDistance", 100, 5000, 50, Color3.fromRGB(100, 80, 150))
     MakeSlider("Скорость полёта", 2, "FlySpeed", 50, 500, 10)
     MakeSlider("Высота над мобом", 3, "SafeHeight", 3, 40, 1)
     MakeSlider("Размер моба (x)", 4, "MobScale", 1, 8, 0.5)
@@ -2080,7 +2087,8 @@ local function CreateUI()
     task.spawn(function()
         while gui.Parent do
             if State.ChestRunning then
-                status.Text = "📦 СУНДУКИ • цикл #"..State.ChestCycleCount
+                status.Text = string.format("📦 СУНДУКИ • круг %d • точка %d/%d",
+                    State.ChestCycleCount, State.ChestRouteIndex, #CHEST_ROUTE)
                 status.TextColor3 = COLORS.textPurple
             elseif State.FarmRunning then
                 status.Text = "🌾 АВТО-ФАРМ • убито: "..State.FarmKilled
@@ -2090,7 +2098,7 @@ local function CreateUI()
                 status.Text = State.ActiveSection.name.."  •  "..uiInfo
                 status.TextColor3 = Color3.fromRGB(160, 220, 160)
             elseif State.FlyActive then
-                status.Text = "свободный полёт"
+                status.Text = "✈ свободный полёт (WASD + Space/Shift)"
                 status.TextColor3 = Color3.fromRGB(150, 180, 230)
             elseif State.SelectedSection then
                 status.Text = State.SelectedSection.name
@@ -2100,8 +2108,9 @@ local function CreateUI()
                 status.TextColor3 = COLORS.textDim
             end
             debug.Text = State.DebugText
-            chestStats.Text = "циклов: "..State.ChestCycleCount
-            task.wait(0.3)
+            chestStats.Text = string.format("кругов: %d  •  точка: %d/%d",
+                State.ChestCycleCount, State.ChestRouteIndex, #CHEST_ROUTE)
+            task.wait(0.5)
         end
     end)
 
@@ -2137,10 +2146,289 @@ end
 CreateUI()
 CreateLiveOverlay()
 
+--// ============================================================
+-- БЛОКНОТ КООРДИНАТ (Z)
+-- ============================================================
+local function CreateNotepad()
+    local notepadGui = Instance.new("ScreenGui")
+    notepadGui.Name = "BinNotepad"
+    notepadGui.ResetOnSpawn = false
+    notepadGui.Enabled = false
+    notepadGui.Parent = LP:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 420, 0, 460)
+    frame.Position = UDim2.new(0.5, -210, 0.5, -230)
+    frame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Parent = notepadGui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 16)
+    local fStroke = Instance.new("UIStroke", frame)
+    fStroke.Color = Color3.fromRGB(80, 60, 120)
+    fStroke.Thickness = 1
+    fStroke.Transparency = 0.3
+
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 40)
+    titleBar.BackgroundColor3 = Color3.fromRGB(16, 12, 22)
+    titleBar.BorderSizePixel = 0
+    titleBar.Active = true
+    titleBar.Parent = frame
+    Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 16)
+    local tbCut = Instance.new("Frame")
+    tbCut.Size = UDim2.new(1, 0, 0, 14); tbCut.Position = UDim2.new(0, 0, 1, -14)
+    tbCut.BackgroundColor3 = Color3.fromRGB(16, 12, 22); tbCut.BorderSizePixel = 0; tbCut.Parent = titleBar
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -60, 1, 0); title.Position = UDim2.new(0, 16, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "📝 БЛОКНОТ КООРДИНАТ (Z)"
+    title.TextColor3 = Color3.fromRGB(200, 170, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = titleBar
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 26, 0, 26); closeBtn.Position = UDim2.new(1, -34, 0, 7)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(50, 25, 25); closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(180, 130, 130)
+    closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 12
+    closeBtn.AutoButtonColor = false; closeBtn.Parent = titleBar
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
+    closeBtn.MouseButton1Click:Connect(function()
+        notepadGui.Enabled = false
+    end)
+
+    local liveLabel = Instance.new("TextLabel")
+    liveLabel.Size = UDim2.new(1, -24, 0, 22)
+    liveLabel.Position = UDim2.new(0, 12, 0, 48)
+    liveLabel.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+    liveLabel.BorderSizePixel = 0
+    liveLabel.Text = "Vector3.new(0, 0, 0)"
+    liveLabel.TextColor3 = Color3.fromRGB(150, 220, 150)
+    liveLabel.Font = Enum.Font.Code
+    liveLabel.TextSize = 13
+    liveLabel.Parent = frame
+    Instance.new("UICorner", liveLabel).CornerRadius = UDim.new(0, 8)
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, -24, 1, -220)
+    scroll.Position = UDim2.new(0, 12, 0, 78)
+    scroll.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 4
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 60, 120)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.Parent = frame
+    Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 10)
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(1, -10, 0, 0)
+    textBox.Position = UDim2.new(0, 5, 0, 5)
+    textBox.BackgroundTransparency = 1
+    textBox.Text = ""
+    textBox.TextColor3 = Color3.fromRGB(220, 220, 240)
+    textBox.Font = Enum.Font.Code
+    textBox.TextSize = 13
+    textBox.TextXAlignment = Enum.TextXAlignment.Left
+    textBox.TextYAlignment = Enum.TextYAlignment.Top
+    textBox.MultiLine = true
+    textBox.ClearTextOnFocus = false
+    textBox.TextWrapped = true
+    textBox.TextEditable = false
+    textBox.AutomaticSize = Enum.AutomaticSize.Y
+    textBox.Parent = scroll
+
+    local btnRow1 = Instance.new("Frame")
+    btnRow1.Size = UDim2.new(1, -24, 0, 32)
+    btnRow1.Position = UDim2.new(0, 12, 1, -136)
+    btnRow1.BackgroundTransparency = 1
+    btnRow1.Parent = frame
+
+    local btnRow2 = Instance.new("Frame")
+    btnRow2.Size = UDim2.new(1, -24, 0, 32)
+    btnRow2.Position = UDim2.new(0, 12, 1, -98)
+    btnRow2.BackgroundTransparency = 1
+    btnRow2.Parent = frame
+
+    local btnRow3 = Instance.new("Frame")
+    btnRow3.Size = UDim2.new(1, -24, 0, 32)
+    btnRow3.Position = UDim2.new(0, 12, 1, -60)
+    btnRow3.BackgroundTransparency = 1
+    btnRow3.Parent = frame
+
+    local function MakeBtn(parent, text, posX, color, textColor)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0.485, 0, 1, 0)
+        b.Position = UDim2.new(posX, 0, 0, 0)
+        b.BackgroundColor3 = color
+        b.Text = text
+        b.TextColor3 = textColor
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 11
+        b.AutoButtonColor = false
+        b.Parent = parent
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+        return b
+    end
+
+    local addBtn = MakeBtn(btnRow1, "➕ ДОБАВИТЬ ТЕКУЩУЮ", 0, Color3.fromRGB(35, 90, 55), Color3.fromRGB(230, 255, 230))
+    local addLastBtn = MakeBtn(btnRow1, "➕ ПОСЛЕДНЮЮ ИЗ КООРД", 0.515, Color3.fromRGB(45, 75, 100), Color3.fromRGB(180, 220, 255))
+
+    local copyBtn = MakeBtn(btnRow2, "📋 КОПИРОВАТЬ ВСЁ", 0, Color3.fromRGB(60, 45, 90), Color3.fromRGB(230, 200, 255))
+    local clearBtn = MakeBtn(btnRow2, "🗑 ОЧИСТИТЬ", 0.515, Color3.fromRGB(80, 30, 30), Color3.fromRGB(255, 180, 180))
+
+    local countLabel = Instance.new("TextLabel")
+    countLabel.Size = UDim2.new(0.485, 0, 1, 0)
+    countLabel.Position = UDim2.new(0, 0, 0, 0)
+    countLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+    countLabel.BorderSizePixel = 0
+    countLabel.Text = "записей: 0"
+    countLabel.TextColor3 = Color3.fromRGB(160, 160, 180)
+    countLabel.Font = Enum.Font.GothamBold
+    countLabel.TextSize = 11
+    countLabel.Parent = btnRow3
+    Instance.new("UICorner", countLabel).CornerRadius = UDim.new(0, 8)
+
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(0.485, 0, 1, 0)
+    statusLabel.Position = UDim2.new(0.515, 0, 0, 0)
+    statusLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+    statusLabel.BorderSizePixel = 0
+    statusLabel.Text = "готов"
+    statusLabel.TextColor3 = Color3.fromRGB(130, 200, 130)
+    statusLabel.Font = Enum.Font.GothamBold
+    statusLabel.TextSize = 11
+    statusLabel.Parent = btnRow3
+    Instance.new("UICorner", statusLabel).CornerRadius = UDim.new(0, 8)
+
+    local records = {}
+    local lastCoordStr = ""
+
+    local function RefreshText()
+        textBox.Text = table.concat(records, "\n")
+        countLabel.Text = "записей: "..(#records)
+    end
+
+    local function GetCoordString()
+        local r = GetRoot()
+        if not r then return nil end
+        return string.format("Vector3.new(%d, %d, %d)",
+            math.floor(r.Position.X + 0.5),
+            math.floor(r.Position.Y + 0.5),
+            math.floor(r.Position.Z + 0.5))
+    end
+
+    local function SetStatus(t, isGood)
+        statusLabel.Text = t
+        statusLabel.TextColor3 = isGood and Color3.fromRGB(130, 200, 130) or Color3.fromRGB(220, 130, 130)
+        task.delay(1.5, function()
+            if statusLabel.Parent then
+                statusLabel.Text = "готов"
+                statusLabel.TextColor3 = Color3.fromRGB(130, 200, 130)
+            end
+        end)
+    end
+
+    addBtn.MouseButton1Click:Connect(function()
+        local s = GetCoordString()
+        if s then
+            table.insert(records, s)
+            RefreshText()
+            SetStatus("добавлено", true)
+        else
+            SetStatus("нет персонажа", false)
+        end
+    end)
+
+    addLastBtn.MouseButton1Click:Connect(function()
+        if lastCoordStr ~= "" then
+            table.insert(records, lastCoordStr)
+            RefreshText()
+            SetStatus("добавлено", true)
+        else
+            SetStatus("нет данных", false)
+        end
+    end)
+
+    copyBtn.MouseButton1Click:Connect(function()
+        if #records == 0 then
+            SetStatus("нечего копировать", false)
+            return
+        end
+        local full = table.concat(records, "\n")
+        pcall(function()
+            if setclipboard then setclipboard(full)
+            elseif toclipboard then toclipboard(full) end
+        end)
+        SetStatus("скопировано!", true)
+    end)
+
+    clearBtn.MouseButton1Click:Connect(function()
+        records = {}
+        RefreshText()
+        SetStatus("очищено", true)
+    end)
+
+    task.spawn(function()
+        while notepadGui.Parent do
+            local r = GetRoot()
+            if r then
+                local s = string.format("Vector3.new(%d, %d, %d)",
+                    math.floor(r.Position.X + 0.5),
+                    math.floor(r.Position.Y + 0.5),
+                    math.floor(r.Position.Z + 0.5))
+                liveLabel.Text = s
+                lastCoordStr = s
+            else
+                liveLabel.Text = "нет персонажа"
+            end
+            task.wait(0.2)
+        end
+    end)
+
+    local dragging, ds, sp
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; ds = input.Position; sp = frame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+                         or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - ds
+            frame.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    return notepadGui
+end
+
+local BinNotepad = CreateNotepad()
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.Z then
+        if BinNotepad then
+            BinNotepad.Enabled = not BinNotepad.Enabled
+        end
+    end
+end)
+
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "BIN QUEST v67",
-        Text = "Переключатель разрешения в НАСТР. Ня!",
+        Title = "BIN QUEST v73",
+        Text = "Фикс сундуков. Z — блокнот. Ня!",
         Duration = 4,
     })
 end)

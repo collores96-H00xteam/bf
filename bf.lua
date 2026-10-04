@@ -1,6 +1,6 @@
 --[[
-    BIN'S QUEST — v46
-    ФИКС: список ТП скроллится, кнопки не выпирают
+    BIN'S QUEST — v49
+    ФИКС: GUI можно двигать с любого места (titleBar + фон)
 ]]
 
 local Players             = game:GetService("Players")
@@ -17,8 +17,8 @@ local Camera = Workspace.CurrentCamera
 local Config = {
     FlySpeed    = 200,
     SafeHeight  = 18,
-    MobScale    = 6,
-    HitboxSize  = 40,
+    MobScale    = 4,
+    HitboxSize  = 320,
 }
 local FLY_ARRIVE    = 4
 local KILL_TIMEOUT  = 20
@@ -29,14 +29,12 @@ local EQUIP_TIMEOUT = 15
 local COLORS = {
     bg = Color3.fromRGB(18, 16, 28),
     bgPanel = Color3.fromRGB(28, 24, 44),
-    bgPanelHover = Color3.fromRGB(40, 34, 60),
     bgTitle = Color3.fromRGB(48, 24, 92),
     bgAccent = Color3.fromRGB(70, 45, 140),
     bgStart = Color3.fromRGB(40, 140, 70),
     bgStop = Color3.fromRGB(170, 45, 45),
     bgSelect = Color3.fromRGB(60, 90, 60),
     stroke = Color3.fromRGB(130, 90, 210),
-    strokeSoft = Color3.fromRGB(70, 55, 110),
     text = Color3.fromRGB(230, 225, 255),
     textDim = Color3.fromRGB(150, 140, 190),
     textGreen = Color3.fromRGB(140, 220, 140),
@@ -598,9 +596,11 @@ local function StartSelected()
                 ClickAt(clk[1], clk[2])
                 if i < #s.clicks then task.wait(CLICK_DELAY) end
             end
-            task.wait(1)
+            task.wait(1.5)
 
             State.Killed = 0
+            Log("квест взят, счётчик = 0")
+
             while State.Running and State.ActiveSection == s do
                 if not Alive() then break end
                 if State.Killed >= s.killTarget then
@@ -632,6 +632,7 @@ local function CreateUI()
     main.Position = UDim2.new(0.5, -180, 0.5, -220)
     main.BackgroundColor3 = COLORS.bg
     main.BorderSizePixel = 0; main.Parent = gui
+    main.Active = true
     Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
     local mst = Instance.new("UIStroke", main)
     mst.Color = COLORS.stroke; mst.Thickness = 2; mst.Transparency = 0.2
@@ -640,18 +641,21 @@ local function CreateUI()
     titleBar.Size = UDim2.new(1, 0, 0, 42)
     titleBar.BackgroundColor3 = COLORS.bgTitle
     titleBar.BorderSizePixel = 0; titleBar.Parent = main
+    titleBar.Active = true
     Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 14)
     local tb = Instance.new("Frame")
     tb.Size = UDim2.new(1, 0, 0, 14); tb.Position = UDim2.new(0, 0, 1, -14)
     tb.BackgroundColor3 = COLORS.bgTitle; tb.BorderSizePixel = 0; tb.Parent = titleBar
+    tb.Active = true
 
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -50, 1, 0); title.Position = UDim2.new(0, 15, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "⚡  БИН — АВТО КВЕСТ v46"
+    title.Text = "⚡  БИН — АВТО КВЕСТ v49"
     title.TextColor3 = COLORS.textAccent
     title.Font = Enum.Font.GothamBold; title.TextSize = 15
     title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Active = true
     title.Parent = titleBar
 
     local close = Instance.new("TextButton")
@@ -670,6 +674,7 @@ local function CreateUI()
     tabsFrame.Position = UDim2.new(0, 10, 0, 50)
     tabsFrame.BackgroundColor3 = COLORS.bgPanel
     tabsFrame.BorderSizePixel = 0; tabsFrame.Parent = main
+    tabsFrame.Active = true
     Instance.new("UICorner", tabsFrame).CornerRadius = UDim.new(0, 8)
 
     local function MakeTab(text, order, total)
@@ -701,16 +706,13 @@ local function CreateUI()
         end
     end
 
-    -- КВЕСТ PAGE
     local questPage = Instance.new("Frame")
     questPage.Size = UDim2.new(1, -20, 1, -160)
     questPage.Position = UDim2.new(0, 10, 0, 90)
     questPage.BackgroundTransparency = 1; questPage.Parent = main
 
-    -- Внутри квестов - скролл
     local questScroll = Instance.new("ScrollingFrame")
     questScroll.Size = UDim2.new(1, 0, 1, 0)
-    questScroll.Position = UDim2.new(0, 0, 0, 0)
     questScroll.BackgroundTransparency = 1
     questScroll.BorderSizePixel = 0
     questScroll.ScrollBarThickness = 4
@@ -815,10 +817,9 @@ local function CreateUI()
         end)
     end
 
-    -- Кнопка СТАРТ - внизу questPage (не скролится)
     local actionContainer = Instance.new("Frame")
-    actionContainer.Size = UDim2.new(1, 0, 0, 60)
-    actionContainer.Position = UDim2.new(0, 0, 1, -100)
+    actionContainer.Size = UDim2.new(1, 0, 0, 100)
+    actionContainer.Position = UDim2.new(0, 0, 1, -105)
     actionContainer.BackgroundTransparency = 1
     actionContainer.Parent = questPage
 
@@ -860,7 +861,6 @@ local function CreateUI()
     debug.Parent = actionContainer
     Instance.new("UICorner", debug).CornerRadius = UDim.new(0, 6)
 
-    -- ТП PAGE со ScrollingFrame
     local tpPage = Instance.new("Frame")
     tpPage.Size = UDim2.new(1, -20, 1, -160)
     tpPage.Position = UDim2.new(0, 10, 0, 90)
@@ -868,7 +868,6 @@ local function CreateUI()
 
     local tpScroll = Instance.new("ScrollingFrame")
     tpScroll.Size = UDim2.new(1, 0, 1, 0)
-    tpScroll.Position = UDim2.new(0, 0, 0, 0)
     tpScroll.BackgroundTransparency = 1
     tpScroll.BorderSizePixel = 0
     tpScroll.ScrollBarThickness = 5
@@ -895,7 +894,6 @@ local function CreateUI()
         end)
     end
 
-    -- НАСТР PAGE
     local cfgPage = Instance.new("Frame")
     cfgPage.Size = UDim2.new(1, -20, 1, -160)
     cfgPage.Position = UDim2.new(0, 10, 0, 90)
@@ -1058,28 +1056,51 @@ local function CreateUI()
         end
     end)
 
+    --// ДРАГ — работает с любого "непустого" места
     local dragging, ds, sp
-    titleBar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true; ds = i.Position; sp = main.Position
+    local function startDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            ds = input.Position
+            sp = main.Position
         end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            local d = i.Position - ds
+    end
+    local function updateDrag(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+                         or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - ds
             main.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
         end
+    end
+    local function endDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end
+
+    -- Драг с нескольких элементов
+    titleBar.InputBegan:Connect(startDrag)
+    title.InputBegan:Connect(startDrag)
+    tb.InputBegan:Connect(startDrag)
+    main.InputBegan:Connect(startDrag)
+    tabsFrame.InputBegan:Connect(function(input)
+        -- только если клик по пустому месту tabsFrame (не на кнопке)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            startDrag(input)
+        end
     end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-    end)
+
+    UserInputService.InputChanged:Connect(updateDrag)
+    UserInputService.InputEnded:Connect(endDrag)
 end
 
 CreateUI()
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "⚡ БИН v46",
-        Text = "Список ТП теперь со скроллом",
+        Title = "⚡ БИН v49",
+        Text = "GUI теперь двигается с любого места",
         Duration = 4,
     })
 end)
